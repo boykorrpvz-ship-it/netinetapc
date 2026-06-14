@@ -11,6 +11,8 @@ import android.os.Build
 import android.util.Log
 
 class IronVpnService : VpnService() {
+    private var stopHandled = false
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> startTunnel(intent)
@@ -20,43 +22,67 @@ class IronVpnService : VpnService() {
     }
 
     override fun onDestroy() {
-        stopTunnel()
+        if (!stopHandled && state != "disconnected") {
+            stopTunnel()
+        }
         super.onDestroy()
     }
 
     private fun startTunnel(intent: Intent) {
+        stopHandled = false
         val configJson = intent.getStringExtra(EXTRA_CONFIG_JSON).orEmpty()
         val profileName = intent.getStringExtra(EXTRA_PROFILE_NAME).orEmpty().ifBlank { "IronVPN" }
+        val protocol = intent.getStringExtra(EXTRA_PROTOCOL).orEmpty().ifBlank { PROTOCOL_VLESS }
+        val routeRussianServicesDirect =
+            intent.getBooleanExtra(EXTRA_ROUTE_RUSSIAN_SERVICES_DIRECT, true)
 
-        state = "connecting"
+        setState("connecting")
         startForeground(NOTIFICATION_ID, notification("Запуск $profileName"))
 
-        if (!SingBoxBridge.isAvailable()) {
+        if (protocol == PROTOCOL_VLESS && !SingBoxBridge.isAvailable()) {
             Log.e(TAG, "VPN core is not available")
-            state = "unsupported"
+            setState("unsupported")
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return
         }
 
         try {
-            SingBoxBridge.start(this, configJson)
-            state = "connected"
+            if (protocol == PROTOCOL_AMNEZIA_WG) {
+                SingBoxBridge.stop()
+                AmneziaWgBridge.start(
+                    this,
+                    configJson,
+                    profileName,
+                    routeRussianServicesDirect,
+                )
+            } else {
+                AmneziaWgBridge.stop()
+                SingBoxBridge.start(this, configJson)
+            }
+            setState("connected")
             startForeground(NOTIFICATION_ID, notification("$profileName подключён"))
         } catch (error: Throwable) {
             Log.e(TAG, "Failed to start VPN", error)
-            state = "error"
+            setState("error")
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
     }
 
     private fun stopTunnel() {
-        state = "disconnecting"
+        stopHandled = true
+        setState("disconnecting")
         SingBoxBridge.stop()
-        state = "disconnected"
+        setState("disconnected")
+        AmneziaWgBridge.stop()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    private fun setState(nextState: String) {
+        state = nextState
+        VpnStateStore.set(this, nextState)
     }
 
     private fun notification(text: String): Notification {
@@ -70,7 +96,7 @@ class IronVpnService : VpnService() {
 
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_launcher)
+                .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle("IronVPN")
                 .setContentText(text)
                 .setContentIntent(openIntent)
@@ -79,7 +105,7 @@ class IronVpnService : VpnService() {
         } else {
             @Suppress("DEPRECATION")
             Notification.Builder(this)
-                .setSmallIcon(R.drawable.ic_launcher)
+                .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle("IronVPN")
                 .setContentText(text)
                 .setContentIntent(openIntent)
@@ -112,9 +138,14 @@ class IronVpnService : VpnService() {
         const val ACTION_STOP = "shop.ironvpn.app.STOP"
         const val EXTRA_CONFIG_JSON = "configJson"
         const val EXTRA_PROFILE_NAME = "profileName"
+        const val EXTRA_PROTOCOL = "protocol"
+        const val EXTRA_ROUTE_RUSSIAN_SERVICES_DIRECT =
+            "routeRussianServicesDirect"
 
         private const val CHANNEL_ID = "ironvpn_connection"
         private const val NOTIFICATION_ID = 7101
+        private const val PROTOCOL_VLESS = "vless"
+        private const val PROTOCOL_AMNEZIA_WG = "amneziawg"
 
         @Volatile
         var state: String = "disconnected"

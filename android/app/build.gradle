@@ -7,6 +7,13 @@ plugins {
 android {
     namespace "shop.ironvpn.app"
     compileSdk flutter.compileSdkVersion
+    ndkVersion "28.2.13676358"
+
+    packaging {
+        resources {
+            excludes += ["META-INF/versions/9/OSGI-INF/MANIFEST.MF"]
+        }
+    }
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
@@ -32,4 +39,5 @@ flutter {
 
 dependencies {
     implementation "net.clever-vpn:libbox-android:2.1.1"
+    implementation "com.zaneschepke:amneziawg-android:2.3.7"
 }

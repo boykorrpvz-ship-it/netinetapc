@@ -2,7 +2,9 @@ import 'dart:convert';
 
 import 'package:flutter/services.dart';
 
+import '../models/stored_vpn_profile.dart';
 import '../models/vless_profile.dart';
+import '../models/vpn_product.dart';
 
 enum VpnState {
   disconnected,
@@ -15,6 +17,18 @@ enum VpnState {
 
 class VpnController {
   static const _channel = MethodChannel('shop.ironvpn/vpn');
+
+  Future<String?> stableDeviceId() async {
+    try {
+      final value = await _channel.invokeMethod<String>('deviceId');
+      final normalized = value?.trim();
+      return normalized == null || normalized.isEmpty ? null : normalized;
+    } on MissingPluginException {
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
 
   Future<bool> prepare() async {
     try {
@@ -36,18 +50,24 @@ class VpnController {
   }
 
   Future<VpnState> start({
-    required VlessProfile profile,
+    required StoredVpnProfile profile,
     required bool routeRussianServicesDirect,
   }) async {
-    final configJson = profile.toSingBoxConfigJson(
-      routeRussianServicesDirect: routeRussianServicesDirect,
-    );
+    final protocol = profile.product.apiValue;
+    final configPayload = switch (profile.product) {
+      VpnProduct.vless => profile.vlessProfile.toSingBoxConfigJson(
+          routeRussianServicesDirect: routeRussianServicesDirect,
+        ),
+      VpnProduct.amneziaWg => profile.payload,
+    };
 
     try {
       final raw = await _channel.invokeMethod<String>('start', {
         'profileName': profile.name,
-        'configJson': configJson,
-        'rawLink': profile.rawLink,
+        'protocol': protocol,
+        'configJson': configPayload,
+        'rawLink': profile.payload,
+        'routeRussianServicesDirect': routeRussianServicesDirect,
       });
       var state = _stateFromString(raw);
       for (var attempt = 0; attempt < 40; attempt++) {

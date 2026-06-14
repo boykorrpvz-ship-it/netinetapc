@@ -14,6 +14,9 @@ class VlessProfile {
     required this.shortId,
     required this.spiderX,
     required this.flow,
+    required this.transportPath,
+    required this.hostHeader,
+    required this.alpn,
     required this.rawLink,
   });
 
@@ -29,6 +32,9 @@ class VlessProfile {
   final String shortId;
   final String spiderX;
   final String flow;
+  final String transportPath;
+  final String hostHeader;
+  final String alpn;
   final String rawLink;
 
   static VlessProfile parse(String value) {
@@ -52,27 +58,42 @@ class VlessProfile {
     }
 
     final params = uri.queryParameters;
+    final type = params['type'] ?? 'tcp';
     final security = params['security'] ?? '';
     final publicKey = params['pbk'] ?? '';
     final shortId = params['sid'] ?? '';
+    final hostHeader = params['host'] ?? '';
+    final path = params['path'] ?? '/';
 
-    if (security != 'reality' || publicKey.isEmpty || shortId.isEmpty) {
+    if (security == 'reality' && (publicKey.isEmpty || shortId.isEmpty)) {
       throw const FormatException('Нужна VLESS Reality ссылка с pbk и sid.');
     }
 
+    if (security != 'reality' && security != 'tls') {
+      throw const FormatException('Поддерживаются VLESS Reality и VLESS TLS.');
+    }
+
+    if (type != 'tcp' && type != 'ws') {
+      throw const FormatException('Поддерживаются VLESS TCP и WebSocket.');
+    }
+
     return VlessProfile(
-      name: Uri.decodeComponent(uri.fragment.isEmpty ? 'IronVPN' : uri.fragment),
+      name:
+          Uri.decodeComponent(uri.fragment.isEmpty ? 'IronVPN' : uri.fragment),
       uuid: uuid,
       host: uri.host,
       port: uri.hasPort ? uri.port : 443,
-      type: params['type'] ?? 'tcp',
+      type: type,
       security: security,
       publicKey: publicKey,
       fingerprint: params['fp'] ?? 'chrome',
-      sni: params['sni'] ?? uri.host,
+      sni: params['sni'] ?? (hostHeader.isEmpty ? uri.host : hostHeader),
       shortId: shortId,
       spiderX: params['spx'] ?? '/',
-      flow: params['flow'] ?? 'xtls-rprx-vision',
+      flow: params['flow'] ?? (type == 'tcp' ? 'xtls-rprx-vision' : ''),
+      transportPath: path.startsWith('/') ? path : '/$path',
+      hostHeader: hostHeader,
+      alpn: params['alpn'] ?? '',
       rawLink: raw,
     );
   }
@@ -91,6 +112,10 @@ class VlessProfile {
       shortId: json['shortId'] as String,
       spiderX: json['spiderX'] as String,
       flow: json['flow'] as String,
+      transportPath: json['transportPath'] as String? ?? '/',
+      hostHeader: json['hostHeader'] as String? ?? '',
+      alpn: json['alpn'] as String? ??
+          _alpnFromRawLink(json['rawLink'] as String? ?? ''),
       rawLink: json['rawLink'] as String,
     );
   }
@@ -109,6 +134,9 @@ class VlessProfile {
       'shortId': shortId,
       'spiderX': spiderX,
       'flow': flow,
+      'transportPath': transportPath,
+      'hostHeader': hostHeader,
+      'alpn': alpn,
       'rawLink': rawLink,
     };
   }
@@ -133,6 +161,31 @@ class VlessProfile {
         'outbound': 'block',
       },
     ];
+
+    final outbound = <String, dynamic>{
+      'type': 'vless',
+      'tag': 'proxy',
+      'server': _connectHost(host),
+      'server_port': port,
+      'uuid': uuid,
+      'packet_encoding': 'xudp',
+      'tls': _tlsConfig(),
+    };
+
+    if (flow.isNotEmpty && type == 'tcp') {
+      outbound['flow'] = flow;
+    }
+
+    if (type == 'ws') {
+      outbound['transport'] = {
+        'type': 'ws',
+        'path': transportPath,
+        if (hostHeader.isNotEmpty)
+          'headers': {
+            'Host': hostHeader,
+          },
+      };
+    }
 
     return {
       'log': {
@@ -173,28 +226,7 @@ class VlessProfile {
         },
       ],
       'outbounds': [
-        {
-          'type': 'vless',
-          'tag': 'proxy',
-          'server': host,
-          'server_port': port,
-          'uuid': uuid,
-          'flow': flow,
-          'packet_encoding': 'xudp',
-          'tls': {
-            'enabled': true,
-            'server_name': sni,
-            'utls': {
-              'enabled': true,
-              'fingerprint': fingerprint,
-            },
-            'reality': {
-              'enabled': true,
-              'public_key': publicKey,
-              'short_id': shortId,
-            },
-          },
-        },
+        outbound,
         {
           'type': 'direct',
           'tag': 'direct',
@@ -219,8 +251,52 @@ class VlessProfile {
     );
   }
 
+  Map<String, dynamic> _tlsConfig() {
+    return {
+      'enabled': true,
+      'server_name': sni,
+      'utls': {
+        'enabled': true,
+        'fingerprint': fingerprint,
+      },
+      if (alpn.isNotEmpty)
+        'alpn': alpn
+            .split(',')
+            .map((item) => item.trim())
+            .where((item) => item.isNotEmpty)
+            .toList(),
+      if (security == 'reality')
+        'reality': {
+          'enabled': true,
+          'public_key': publicKey,
+          'short_id': shortId,
+        },
+    };
+  }
+
   static final _uuidRegex = RegExp(
     r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+  );
+
+  static String _alpnFromRawLink(String rawLink) {
+    final uri = Uri.tryParse(rawLink);
+    if (uri == null) {
+      return '';
+    }
+    return uri.queryParameters['alpn'] ?? '';
+  }
+
+  static String _connectHost(String host) {
+    final match = _sslipIpv4Regex.firstMatch(host);
+    if (match == null) {
+      return host;
+    }
+
+    return '${match.group(1)}.${match.group(2)}.${match.group(3)}.${match.group(4)}';
+  }
+
+  static final _sslipIpv4Regex = RegExp(
+    r'^(\d{1,3})-(\d{1,3})-(\d{1,3})-(\d{1,3})\.sslip\.io$',
   );
 
   static const _directDomainSuffixes = [
