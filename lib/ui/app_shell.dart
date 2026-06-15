@@ -850,81 +850,67 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     var sheetSelected = _selectedProduct;
     var sheetDarkTheme = widget.darkTheme;
 
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      enableDrag: true,
-      isDismissible: true,
-      backgroundColor: Colors.transparent,
-      builder: (sheetContext) {
-        return DraggableScrollableSheet(
-          expand: false,
-          initialChildSize: 0.92,
-          maxChildSize: 0.92,
-          minChildSize: 0,
-          shouldCloseOnMinExtent: true,
-          builder: (context, scrollController) {
-            return StatefulBuilder(
-              builder: (context, setSheetState) {
-                Future<void> selectProduct(VpnProduct product) async {
-                  setSheetState(() => sheetSelected = product);
-                }
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (sheetContext) {
+          return StatefulBuilder(
+            builder: (context, setSheetState) {
+              Future<void> selectProduct(VpnProduct product) async {
+                setSheetState(() => sheetSelected = product);
+              }
 
-                Future<void> runAndRefresh(
-                    Future<void> Function() action) async {
-                  await action();
-                  if (mounted) {
-                    setSheetState(() {});
-                  }
+              Future<void> runAndRefresh(
+                  Future<void> Function() action) async {
+                await action();
+                if (mounted) {
+                  setSheetState(() {});
                 }
+              }
 
-                return Theme(
-                  data: _productTheme(context, sheetSelected),
-                  child: _SettingsSheet(
-                    scrollController: scrollController,
-                    selected: sheetSelected,
-                    activeProducts: {
-                      for (final item in VpnProduct.values)
-                        item: _isActive(item),
-                    },
-                    pendingProducts: {
-                      for (final item in VpnProduct.values)
-                        item: _isPending(item),
-                    },
-                    subscriptions: _subscriptions,
-                    routeRussianDirect: _routeRussianDirect,
-                    busy: _busy,
-                    accountEmail: _accountEmail,
-                    darkTheme: sheetDarkTheme,
-                    onDarkThemeChanged: (value) {
-                      setSheetState(() => sheetDarkTheme = value);
-                      widget.onDarkThemeChanged(value);
-                    },
-                    onProductSelected: selectProduct,
-                    onRouteChanged: (value) async {
-                      await _toggleRussianDirect(value);
-                      if (mounted) {
-                        setSheetState(() {});
-                      }
-                    },
-                    onRefresh: (product) => runAndRefresh(
-                      () => _refreshSubscription(product),
-                    ),
-                    onSyncAccount: () => runAndRefresh(() => _syncAccount()),
-                    onOpenAccount: _openAccountSite,
-                    onLogin: () {
-                      Navigator.of(sheetContext).pop();
-                      _openLoginScreen();
-                    },
-                    onLogout: () => runAndRefresh(_logout),
+              return Theme(
+                data: _productTheme(context, sheetSelected),
+                child: _SettingsPage(
+                  selected: sheetSelected,
+                  activeProducts: {
+                    for (final item in VpnProduct.values)
+                      item: _isActive(item),
+                  },
+                  pendingProducts: {
+                    for (final item in VpnProduct.values)
+                      item: _isPending(item),
+                  },
+                  subscriptions: _subscriptions,
+                  routeRussianDirect: _routeRussianDirect,
+                  busy: _busy,
+                  accountEmail: _accountEmail,
+                  darkTheme: sheetDarkTheme,
+                  onDarkThemeChanged: (value) {
+                    setSheetState(() => sheetDarkTheme = value);
+                    widget.onDarkThemeChanged(value);
+                  },
+                  onProductSelected: selectProduct,
+                  onRouteChanged: (value) async {
+                    await _toggleRussianDirect(value);
+                    if (mounted) {
+                      setSheetState(() {});
+                    }
+                  },
+                  onRefresh: (product) => runAndRefresh(
+                    () => _refreshSubscription(product),
                   ),
-                );
-              },
-            );
-          },
-        );
-      },
+                  onSyncAccount: () => runAndRefresh(() => _syncAccount()),
+                  onOpenAccount: _openAccountSite,
+                  onLogin: () {
+                    Navigator.of(sheetContext).pop();
+                    _openLoginScreen();
+                  },
+                  onLogout: () => runAndRefresh(_logout),
+                ),
+              );
+            },
+          );
+        },
+      ),
     );
   }
 
@@ -2421,9 +2407,8 @@ class _AccountPurchasePanel extends StatelessWidget {
   }
 }
 
-class _SettingsSheet extends StatelessWidget {
-  const _SettingsSheet({
-    required this.scrollController,
+class _SettingsPage extends StatelessWidget {
+  const _SettingsPage({
     required this.selected,
     required this.activeProducts,
     required this.pendingProducts,
@@ -2442,7 +2427,6 @@ class _SettingsSheet extends StatelessWidget {
     required this.onLogout,
   });
 
-  final ScrollController scrollController;
   final VpnProduct selected;
   final Map<VpnProduct, bool> activeProducts;
   final Map<VpnProduct, bool> pendingProducts;
@@ -2462,93 +2446,96 @@ class _SettingsSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final media = MediaQuery.of(context);
-    final bottomInset = media.viewInsets.bottom;
-    final bottomPadding = 42.0 + media.padding.bottom;
     final selectedActive = activeProducts[selected] == true;
 
-    return Padding(
-      padding: EdgeInsets.only(bottom: bottomInset),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 320),
-        curve: Curves.easeOutCubic,
-        constraints: BoxConstraints(
-          maxHeight: media.size.height * 0.92,
-        ),
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: Container(
         decoration: BoxDecoration(
           gradient: AppGradients.backgroundFor(selected),
-          borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
         ),
-        child: ScrollConfiguration(
-          behavior: const _NoStretchScrollBehavior(),
-          child: ListView(
-            controller: scrollController,
-            physics: const ClampingScrollPhysics(),
-            padding: EdgeInsets.fromLTRB(20, 10, 20, bottomPadding),
+        child: SafeArea(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Center(
-                child: Container(
-                  width: 42,
-                  height: 5,
-                  decoration: BoxDecoration(
-                    color: AppColors.glassBorderStrong,
-                    borderRadius: BorderRadius.circular(100),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(4, 6, 16, 4),
+                child: Row(
+                  children: [
+                    IconButton(
+                      onPressed: () => Navigator.of(context).maybePop(),
+                      icon: Icon(
+                        Icons.arrow_back_rounded,
+                        color: AppColors.ink,
+                      ),
+                      tooltip: 'Назад',
+                    ),
+                    const SizedBox(width: 2),
+                    Text(
+                      'Настройки',
+                      style: TextStyle(
+                        fontSize: 26,
+                        height: 1,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: -0.6,
+                        color: AppColors.ink,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: ScrollConfiguration(
+                  behavior: const _NoStretchScrollBehavior(),
+                  child: ListView(
+                    physics: const ClampingScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(20, 6, 20, 32),
+                    children: [
+                      _AccountPanel(
+                        product: selected,
+                        email: accountEmail,
+                        busy: busy,
+                        onSync: onSyncAccount,
+                        onLogin: onLogin,
+                        onOpenAccount: onOpenAccount,
+                        onLogout: onLogout,
+                      ),
+                      const SizedBox(height: 16),
+                      _ThemePanel(
+                        product: selected,
+                        darkTheme: darkTheme,
+                        onChanged: onDarkThemeChanged,
+                      ),
+                      const SizedBox(height: 16),
+                      _ProductSwitcher(
+                        title: 'Тип VPN',
+                        selected: selected,
+                        activeProducts: activeProducts,
+                        pendingProducts: pendingProducts,
+                        subscriptions: subscriptions,
+                        onSelected: onProductSelected,
+                        onRefresh: onRefresh,
+                      ),
+                      const SizedBox(height: 16),
+                      if (selectedActive) ...[
+                        _RoutePanel(
+                          product: selected,
+                          value: routeRussianDirect,
+                          onChanged: onRouteChanged,
+                        ),
+                      ] else ...[
+                        _AccountPurchasePanel(
+                          product: selected,
+                          busy: busy,
+                          signedIn: accountEmail != null,
+                          onOpenAccount: onOpenAccount,
+                          onSyncAccount: onSyncAccount,
+                        ),
+                      ],
+                    ],
                   ),
                 ),
               ),
-              const SizedBox(height: 18),
-              Text(
-                'Настройки',
-                style: TextStyle(
-                  fontSize: 28,
-                  height: 1,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: -0.6,
-                  color: AppColors.ink,
-                ),
-              ),
-              const SizedBox(height: 16),
-              _AccountPanel(
-                product: selected,
-                email: accountEmail,
-                busy: busy,
-                onSync: onSyncAccount,
-                onLogin: onLogin,
-                onOpenAccount: onOpenAccount,
-                onLogout: onLogout,
-              ),
-              const SizedBox(height: 16),
-              _ThemePanel(
-                product: selected,
-                darkTheme: darkTheme,
-                onChanged: onDarkThemeChanged,
-              ),
-              const SizedBox(height: 16),
-              _ProductSwitcher(
-                title: 'Тип VPN',
-                selected: selected,
-                activeProducts: activeProducts,
-                pendingProducts: pendingProducts,
-                subscriptions: subscriptions,
-                onSelected: onProductSelected,
-                onRefresh: onRefresh,
-              ),
-              const SizedBox(height: 16),
-              if (selectedActive) ...[
-                _RoutePanel(
-                  product: selected,
-                  value: routeRussianDirect,
-                  onChanged: onRouteChanged,
-                ),
-              ] else ...[
-                _AccountPurchasePanel(
-                  product: selected,
-                  busy: busy,
-                  signedIn: accountEmail != null,
-                  onOpenAccount: onOpenAccount,
-                  onSyncAccount: onSyncAccount,
-                ),
-              ],
             ],
           ),
         ),
