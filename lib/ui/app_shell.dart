@@ -847,7 +847,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   }
 
   Future<void> _openSettings() async {
-    var sheetSelected = _selectedProduct;
+    final sheetSelected = _selectedProduct;
     var sheetDarkTheme = widget.darkTheme;
 
     await Navigator.of(context).push<void>(
@@ -855,10 +855,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         builder: (sheetContext) {
           return StatefulBuilder(
             builder: (context, setSheetState) {
-              Future<void> selectProduct(VpnProduct product) async {
-                setSheetState(() => sheetSelected = product);
-              }
-
               Future<void> runAndRefresh(
                   Future<void> Function() action) async {
                 await action();
@@ -875,11 +871,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                     for (final item in VpnProduct.values)
                       item: _isActive(item),
                   },
-                  pendingProducts: {
-                    for (final item in VpnProduct.values)
-                      item: _isPending(item),
-                  },
-                  subscriptions: _subscriptions,
                   routeRussianDirect: _routeRussianDirect,
                   busy: _busy,
                   accountEmail: _accountEmail,
@@ -888,16 +879,12 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                     setSheetState(() => sheetDarkTheme = value);
                     widget.onDarkThemeChanged(value);
                   },
-                  onProductSelected: selectProduct,
                   onRouteChanged: (value) async {
                     await _toggleRussianDirect(value);
                     if (mounted) {
                       setSheetState(() {});
                     }
                   },
-                  onRefresh: (product) => runAndRefresh(
-                    () => _refreshSubscription(product),
-                  ),
                   onSyncAccount: () => runAndRefresh(() => _syncAccount()),
                   onOpenAccount: _openAccountSite,
                   onLogin: () {
@@ -1328,6 +1315,8 @@ class _Header extends StatelessWidget {
   }
 }
 
+// Product type is chosen on the home screen; kept here for possible reuse.
+// ignore: unused_element
 class _ProductSwitcher extends StatelessWidget {
   const _ProductSwitcher({
     required this.title,
@@ -2014,7 +2003,7 @@ class _RoutePanel extends StatelessWidget {
           style: TextStyle(fontWeight: FontWeight.w900),
         ),
         subtitle: Text(
-          'Ozon, WB, Госуслуги, банки, Steam, FACEIT',
+          'Ozon, Wildberries, Avito, Госуслуги, Сбер, Яндекс, VK',
           style: TextStyle(color: AppColors.inkSoft),
         ),
         value: value,
@@ -2411,16 +2400,12 @@ class _SettingsPage extends StatelessWidget {
   const _SettingsPage({
     required this.selected,
     required this.activeProducts,
-    required this.pendingProducts,
-    required this.subscriptions,
     required this.routeRussianDirect,
     required this.busy,
     required this.accountEmail,
     required this.darkTheme,
     required this.onDarkThemeChanged,
-    required this.onProductSelected,
     required this.onRouteChanged,
-    required this.onRefresh,
     required this.onSyncAccount,
     required this.onLogin,
     required this.onOpenAccount,
@@ -2429,16 +2414,12 @@ class _SettingsPage extends StatelessWidget {
 
   final VpnProduct selected;
   final Map<VpnProduct, bool> activeProducts;
-  final Map<VpnProduct, bool> pendingProducts;
-  final Map<VpnProduct, Subscription?> subscriptions;
   final bool routeRussianDirect;
   final bool busy;
   final String? accountEmail;
   final bool darkTheme;
   final ValueChanged<bool> onDarkThemeChanged;
-  final ValueChanged<VpnProduct>? onProductSelected;
   final ValueChanged<bool> onRouteChanged;
-  final ValueChanged<VpnProduct> onRefresh;
   final VoidCallback onSyncAccount;
   final VoidCallback onLogin;
   final VoidCallback onOpenAccount;
@@ -2459,7 +2440,9 @@ class _SettingsPage extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Padding(
-                padding: const EdgeInsets.fromLTRB(4, 6, 16, 4),
+                // 20px left matches the cards below, so the back arrow and
+                // title line up with the left edge of the panels.
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
                 child: Row(
                   children: [
                     IconButton(
@@ -2469,8 +2452,14 @@ class _SettingsPage extends StatelessWidget {
                         color: AppColors.ink,
                       ),
                       tooltip: 'Назад',
+                      padding: EdgeInsets.zero,
+                      alignment: Alignment.centerLeft,
+                      constraints: const BoxConstraints(
+                        minWidth: 40,
+                        minHeight: 40,
+                      ),
                     ),
-                    const SizedBox(width: 2),
+                    const SizedBox(width: 12),
                     Text(
                       'Настройки',
                       style: TextStyle(
@@ -2501,22 +2490,6 @@ class _SettingsPage extends StatelessWidget {
                         onLogout: onLogout,
                       ),
                       const SizedBox(height: 16),
-                      _ThemePanel(
-                        product: selected,
-                        darkTheme: darkTheme,
-                        onChanged: onDarkThemeChanged,
-                      ),
-                      const SizedBox(height: 16),
-                      _ProductSwitcher(
-                        title: 'Тип VPN',
-                        selected: selected,
-                        activeProducts: activeProducts,
-                        pendingProducts: pendingProducts,
-                        subscriptions: subscriptions,
-                        onSelected: onProductSelected,
-                        onRefresh: onRefresh,
-                      ),
-                      const SizedBox(height: 16),
                       if (selectedActive) ...[
                         _RoutePanel(
                           product: selected,
@@ -2532,6 +2505,12 @@ class _SettingsPage extends StatelessWidget {
                           onSyncAccount: onSyncAccount,
                         ),
                       ],
+                      const SizedBox(height: 16),
+                      _ThemePanel(
+                        product: selected,
+                        darkTheme: darkTheme,
+                        onChanged: onDarkThemeChanged,
+                      ),
                     ],
                   ),
                 ),
