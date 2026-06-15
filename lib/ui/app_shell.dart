@@ -1281,7 +1281,7 @@ class _Header extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'IronVPN',
+                'netineta',
                 style: TextStyle(
                   fontSize: 24,
                   height: 1,

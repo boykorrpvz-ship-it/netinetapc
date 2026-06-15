@@ -31,8 +31,8 @@ class StoredVpnProfile {
     return StoredVpnProfile(
       product: VpnProduct.amneziaWg,
       name: subscription.deviceName.isEmpty
-          ? 'IronVPN AWG'
-          : 'IronVPN ${subscription.deviceName}',
+          ? 'netineta AWG'
+          : 'netineta ${subscription.deviceName}',
       payload: payload,
     );
   }
@@ -40,7 +40,7 @@ class StoredVpnProfile {
   factory StoredVpnProfile.fromJson(Map<String, dynamic> json) {
     return StoredVpnProfile(
       product: VpnProduct.fromApi(json['vpnType']),
-      name: json['name'] as String? ?? 'IronVPN',
+      name: json['name'] as String? ?? 'netineta',
       payload: json['payload'] as String? ?? json['rawLink'] as String? ?? '',
     );
   }

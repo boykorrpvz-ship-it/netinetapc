@@ -146,7 +146,7 @@ class _IronVpnAppState extends State<IronVpnApp> {
     AppColors.useDarkTheme(_darkTheme);
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'IronVPN',
+      title: 'netineta',
       theme: lightTheme,
       darkTheme: darkTheme,
       themeMode: _darkTheme ? ThemeMode.dark : ThemeMode.light,

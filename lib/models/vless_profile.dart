@@ -79,7 +79,7 @@ class VlessProfile {
 
     return VlessProfile(
       name:
-          Uri.decodeComponent(uri.fragment.isEmpty ? 'IronVPN' : uri.fragment),
+          Uri.decodeComponent(uri.fragment.isEmpty ? 'netineta' : uri.fragment),
       uuid: uuid,
       host: uri.host,
       port: uri.hasPort ? uri.port : 443,
