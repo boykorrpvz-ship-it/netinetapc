@@ -2453,7 +2453,6 @@ class _SettingsPage extends StatelessWidget {
                       ),
                       tooltip: 'Назад',
                       padding: EdgeInsets.zero,
-                      alignment: Alignment.centerLeft,
                       constraints: const BoxConstraints(
                         minWidth: 40,
                         minHeight: 40,
