@@ -693,7 +693,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     await _refreshSubscription(access.product);
   }
 
-  Future<void> _selectProduct(VpnProduct product) async {
+  void _selectProduct(VpnProduct product) {
     if (_busy || product == _selectedProduct) {
       return;
     }
@@ -707,37 +707,17 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       return;
     }
 
+    // Switching is a local UI action: show the already-cached state for the
+    // chosen product instantly, then persist and refresh in the background so
+    // the selector never blocks on the network (which made it feel glitchy).
     setState(() {
-      _busy = true;
+      _selectedProduct = product;
+      _state = VpnState.disconnected;
       _message = null;
     });
 
-    try {
-      await _store.saveSelectedProduct(product);
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _selectedProduct = product;
-        _state = VpnState.disconnected;
-      });
-      await _refreshSubscription(product, silent: true);
-    } catch (_) {
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _state = VpnState.error;
-        _message =
-            'Не удалось переключить тип VPN. Закройте VPN и попробуйте еще раз.';
-      });
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-    }
+    unawaited(_store.saveSelectedProduct(product).catchError((_) {}));
+    unawaited(_refreshSubscription(product, silent: true));
   }
 
   Future<void> _refreshAllPending({required bool silent}) async {
