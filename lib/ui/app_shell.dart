@@ -826,6 +826,52 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     }
   }
 
+  // Re-issues the AmneziaWG config (new server endpoint) and re-imports it.
+  Future<void> _replaceAwgConfig() async {
+    if (_busy) {
+      return;
+    }
+    final access = _access[VpnProduct.amneziaWg];
+    if (access == null) {
+      _showMessage('Нет активного конфига для обновления.');
+      return;
+    }
+    if (_state == VpnState.connected ||
+        _state == VpnState.connecting ||
+        _state == VpnState.disconnecting) {
+      setState(() {
+        _message = 'Сначала отключите подключение, затем обновите конфиг.';
+      });
+      return;
+    }
+
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    try {
+      final subscription = await _api.refreshConfig(access);
+      if (!mounted) {
+        return;
+      }
+      await _applySubscription(subscription);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _message = 'Конфиг обновлён. Если были подключены — подключитесь заново.';
+      });
+    } on IronVpnApiException catch (error) {
+      _showMessage(error.message);
+    } catch (_) {
+      _showMessage('Не удалось обновить конфиг. Попробуйте позже.');
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+  }
+
   Future<void> _openSettings() async {
     final sheetSelected = _selectedProduct;
     var sheetDarkTheme = widget.darkTheme;
@@ -1104,6 +1150,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                                                   _refreshSubscription(
                                                 _selectedProduct,
                                               ),
+                                              onReplaceConfig: _selectedProduct ==
+                                                      VpnProduct.amneziaWg
+                                                  ? _replaceAwgConfig
+                                                  : null,
                                             ),
                                             if (_message != null) ...[
                                               SizedBox(
@@ -1870,6 +1920,7 @@ class _SubscriptionPanel extends StatelessWidget {
     required this.busy,
     required this.compact,
     required this.onRefresh,
+    this.onReplaceConfig,
   });
 
   final VpnProduct product;
@@ -1878,6 +1929,7 @@ class _SubscriptionPanel extends StatelessWidget {
   final bool busy;
   final bool compact;
   final VoidCallback onRefresh;
+  final VoidCallback? onReplaceConfig;
 
   @override
   Widget build(BuildContext context) {
@@ -1947,6 +1999,36 @@ class _SubscriptionPanel extends StatelessWidget {
               color: accent,
             ),
           ),
+          if (product == VpnProduct.amneziaWg &&
+              hasAccess &&
+              onReplaceConfig != null) ...[
+            SizedBox(height: compact ? 8 : 12),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: busy ? null : onReplaceConfig,
+                style: TextButton.styleFrom(
+                  foregroundColor: accent,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                icon: const Icon(Icons.sync_rounded, size: 18),
+                label: const Text('Обновить конфиг'),
+              ),
+            ),
+            Text(
+              'Если AmneziaWG перестал подключаться — обновите конфиг: '
+              'сервер обновился, нужен свежий.',
+              style: TextStyle(
+                fontSize: 12.5,
+                height: 1.4,
+                color: AppColors.inkSoft,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
         ],
       ),
     );
