@@ -311,7 +311,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         setState(() {
           _showLoginScreen = false;
           _message = _hasAnyActive()
-              ? 'Подписки загружены. VPN готов к работе.'
+              ? 'Подписки загружены. Подключение готово.'
               : 'Вход выполнен. Активных подписок пока нет.';
         });
       }
@@ -424,7 +424,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       setState(() {
         _busy = false;
         _showLoginScreen = true;
-        _message = 'Вы вышли из аккаунта. Локальный VPN-доступ удалён.';
+        _message = 'Вы вышли из аккаунта. Локальный доступ удалён.';
       });
     }
   }
@@ -702,7 +702,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         _state == VpnState.connecting ||
         _state == VpnState.disconnecting) {
       setState(() {
-        _message = 'Сначала отключите VPN, затем выберите другой тип.';
+        _message = 'Сначала отключите подключение, затем выберите другой тип.';
       });
       return;
     }
@@ -905,7 +905,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       setState(() {
         _busy = false;
         _state = VpnState.disconnected;
-        _message = 'Разрешите VPN-подключение в системном окне.';
+        _message = 'Разрешите подключение в системном окне.';
       });
       return;
     }
@@ -919,11 +919,11 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       _busy = false;
       _state = nextState;
       if (nextState == VpnState.unsupported) {
-        _message = '${profile.product.title}: VPN-движок еще не подключен.';
+        _message = '${profile.product.title}: движок ещё не подключён.';
       } else if (nextState == VpnState.error) {
-        _message = 'Ошибка запуска VPN.';
+        _message = 'Ошибка запуска.';
       } else if (nextState == VpnState.disconnected) {
-        _message = 'VPN не успел запуститься. Попробуйте еще раз.';
+        _message = 'Не удалось запустить. Попробуйте ещё раз.';
       }
     });
   }
@@ -989,7 +989,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         _busy = false;
         _state = nextState;
         if (shouldReconnect && nextState != VpnState.connected) {
-          _message = 'Не удалось применить режим. Подключите VPN ещё раз.';
+          _message = 'Не удалось применить режим. Подключите ещё раз.';
         }
       });
     }
@@ -1272,7 +1272,7 @@ class _Header extends StatelessWidget {
               ),
               SizedBox(height: 5),
               Text(
-                'Защищённый трафик',
+                'Стабильное соединение',
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w700,
@@ -1766,7 +1766,7 @@ class _RoundConnectButtonState extends State<_RoundConnectButton>
                 Semantics(
                   button: true,
                   enabled: canTap,
-                  label: widget.connected ? 'Отключить VPN' : 'Включить VPN',
+                  label: widget.connected ? 'Отключить' : 'Подключить',
                   child: GestureDetector(
                     onTap: canTap
                         ? (widget.connected
@@ -2102,7 +2102,7 @@ class _AccessGate extends StatelessWidget {
               child: TextButton.icon(
                 onPressed: busy ? null : onBack,
                 icon: Icon(Icons.arrow_back_rounded),
-                label: Text('Вернуться к VPN'),
+                label: Text('Вернуться'),
               ),
             ),
             const SizedBox(height: 8),
@@ -2136,7 +2136,7 @@ class _AccessGate extends StatelessWidget {
           Text(
             signedIn
                 ? 'Вы вошли как $accountEmail. Обновите данные или откройте личный кабинет.'
-                : 'Войдите, чтобы приложение автоматически загрузило ваши подписки и настроило VPN.',
+                : 'Войдите, чтобы приложение автоматически загрузило ваши подписки и настроило подключение.',
             style: TextStyle(
               color: AppColors.inkSoft,
               height: 1.4,

@@ -16,7 +16,7 @@ class StoredVpnProfile {
   factory StoredVpnProfile.fromSubscription(Subscription subscription) {
     final payload = subscription.accessPayload;
     if (payload == null || payload.isEmpty) {
-      throw const FormatException('Подписка пока не содержит VPN-конфиг.');
+      throw const FormatException('Подписка пока не содержит конфиг.');
     }
 
     if (subscription.product == VpnProduct.vless) {
