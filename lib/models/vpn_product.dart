@@ -85,8 +85,8 @@ class VpnCatalog {
 
   static VpnPlan defaultPlanFor(VpnProduct product) {
     return switch (product) {
-      VpnProduct.vless => vlessPlans[1],
-      VpnProduct.amneziaWg => amneziaWgPlans[1],
+      VpnProduct.vless => vlessPlans[0],
+      VpnProduct.amneziaWg => amneziaWgPlans[0],
     };
   }
 

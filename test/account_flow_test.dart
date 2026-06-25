@@ -29,7 +29,9 @@ void main() {
               'tariffName': '1 месяц',
               'deviceName': 'Android',
               'expiresMs': future,
-              'vpnLink': 'vless://test',
+              'vpnLink': 'https://netineta.com/sub/test',
+              'subscriptionUrl': 'https://netineta.com/sub/test',
+              'directVpnLink': 'vless://test',
             },
             {
               'orderId': 'awg-order',
@@ -56,6 +58,7 @@ void main() {
     expect(snapshot.email, 'user@example.com');
     expect(snapshot.token, 'account-session-token');
     expect(snapshot.activeFor(VpnProduct.vless)?.accessToken, 'vless-access');
+    expect(snapshot.activeFor(VpnProduct.vless)?.accessPayload, 'vless://test');
     expect(
       snapshot.activeFor(VpnProduct.amneziaWg)?.accessToken,
       'awg-access',

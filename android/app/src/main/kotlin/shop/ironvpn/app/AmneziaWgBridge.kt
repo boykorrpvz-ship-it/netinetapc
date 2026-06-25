@@ -299,6 +299,8 @@ object AmneziaWgBridge {
         "tinkoff.ru",
         "alfabank.ru",
         "vtb.ru",
+        "2ip.ru",
+        "www.2ip.ru",
         "faceit.com",
         "steamcommunity.com",
         "steampowered.com",

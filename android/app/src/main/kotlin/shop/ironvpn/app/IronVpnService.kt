@@ -74,8 +74,8 @@ class IronVpnService : VpnService() {
         stopHandled = true
         setState("disconnecting")
         SingBoxBridge.stop()
-        setState("disconnected")
         AmneziaWgBridge.stop()
+        setState("disconnected")
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }

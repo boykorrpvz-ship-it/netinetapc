@@ -5,6 +5,7 @@ import java.io.File
 
 object VpnStateStore {
     private const val FILE_NAME = "vpn-state.txt"
+    private const val UPDATED_AT_FILE_NAME = "vpn-state-updated-at.txt"
     private val knownStates = setOf(
         "disconnected",
         "connecting",
@@ -18,6 +19,7 @@ object VpnStateStore {
         val normalized = state.takeIf { it in knownStates } ?: "disconnected"
         runCatching {
             stateFile(context).writeText(normalized)
+            updatedAtFile(context).writeText(System.currentTimeMillis().toString())
         }
     }
 
@@ -29,11 +31,25 @@ object VpnStateStore {
             ?: "disconnected"
     }
 
+    fun updatedAt(context: Context): Long {
+        return runCatching {
+            updatedAtFile(context).readText().trim().toLong()
+        }.getOrDefault(0L)
+    }
+
     private fun stateFile(context: Context): File {
+        return stateFile(context, FILE_NAME)
+    }
+
+    private fun updatedAtFile(context: Context): File {
+        return stateFile(context, UPDATED_AT_FILE_NAME)
+    }
+
+    private fun stateFile(context: Context, name: String): File {
         val directory = context.noBackupFilesDir
         if (!directory.exists()) {
             directory.mkdirs()
         }
-        return File(directory, FILE_NAME)
+        return File(directory, name)
     }
 }

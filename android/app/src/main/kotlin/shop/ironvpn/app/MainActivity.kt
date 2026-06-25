@@ -1,7 +1,10 @@
 package shop.ironvpn.app
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.VpnService
 import android.os.Build
 import android.provider.Settings
@@ -38,9 +41,9 @@ class MainActivity : FlutterActivity() {
                     }
                     "stop" -> {
                         stopTunnels()
-                        result.success(currentVpnState())
+                        result.success(currentVpnState(reconcile = false))
                     }
-                    "status" -> result.success(currentVpnState())
+                    "status" -> result.success(currentVpnState(reconcile = true))
                     else -> result.notImplemented()
                 }
             }
@@ -73,7 +76,7 @@ class MainActivity : FlutterActivity() {
         routeRussianServicesDirect: Boolean,
     ): String {
         startVpn(configJson, profileName, protocol, routeRussianServicesDirect)
-        return currentVpnState()
+        return currentVpnState(reconcile = false)
     }
 
     private fun startVpn(
@@ -113,8 +116,46 @@ class MainActivity : FlutterActivity() {
         startService(intent)
     }
 
-    private fun currentVpnState(): String {
-        return VpnStateStore.get(this)
+    private fun currentVpnState(reconcile: Boolean): String {
+        val stored = VpnStateStore.get(this)
+        if (!reconcile) {
+            return stored
+        }
+
+        val running = SingBoxBridge.isRunning() || AmneziaWgBridge.isRunning()
+        val systemVpnActive = isSystemVpnActive()
+        if (running || systemVpnActive) {
+            if (stored == "disconnecting") {
+                return stored
+            }
+            if (stored != "connected") {
+                VpnStateStore.set(this, "connected")
+            }
+            return "connected"
+        }
+
+        if (stored == "connecting" || stored == "disconnecting") {
+            val updatedAt = VpnStateStore.updatedAt(this)
+            val elapsedMs = System.currentTimeMillis() - updatedAt
+            if (updatedAt > 0L && elapsedMs < TRANSIENT_STATE_TTL_MS) {
+                return stored
+            }
+        }
+
+        if (stored == "connected" || stored == "connecting" || stored == "disconnecting") {
+            VpnStateStore.set(this, "disconnected")
+            return "disconnected"
+        }
+
+        return stored
+    }
+
+    private fun isSystemVpnActive(): Boolean {
+        val manager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        return manager.allNetworks.any { network ->
+            val capabilities = manager.getNetworkCapabilities(network) ?: return@any false
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+        }
     }
 
     private fun stableDeviceId(): String {
@@ -127,5 +168,6 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         private const val REQUEST_VPN_PREPARE = 4201
+        private const val TRANSIENT_STATE_TTL_MS = 8_000L
     }
 }

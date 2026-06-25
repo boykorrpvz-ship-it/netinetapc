@@ -12,6 +12,7 @@ class Subscription {
     required this.expiresAt,
     required this.expiresMs,
     required this.vpnLink,
+    required this.directVpnLink,
     required this.vpnConfig,
     required this.subscriptionUrl,
     required this.accessToken,
@@ -29,6 +30,7 @@ class Subscription {
   final String? expiresAt;
   final int? expiresMs;
   final String? vpnLink;
+  final String? directVpnLink;
   final String? vpnConfig;
   final String? subscriptionUrl;
   final String? accessToken;
@@ -39,6 +41,11 @@ class Subscription {
     final config = vpnConfig?.trim();
     if (config != null && config.isNotEmpty) {
       return config;
+    }
+
+    final directLink = directVpnLink?.trim();
+    if (directLink != null && directLink.isNotEmpty) {
+      return directLink;
     }
 
     final link = vpnLink?.trim();
@@ -81,6 +88,7 @@ class Subscription {
       expiresAt: json['expiresAt'] as String?,
       expiresMs: (json['expiresMs'] as num?)?.toInt(),
       vpnLink: json['vpnLink'] as String?,
+      directVpnLink: json['directVpnLink'] as String?,
       vpnConfig: json['vpnConfig'] as String? ?? json['awgConfig'] as String?,
       subscriptionUrl: json['subscriptionUrl'] as String?,
       accessToken: json['accessToken'] as String?,
