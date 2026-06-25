@@ -110,9 +110,13 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   StreamSubscription<Uri>? _linkSub;
   Timer? _accessTimer;
   VpnProduct _selectedProduct = VpnProduct.vless;
+  // The product whose tunnel is actually up. Keeps the UI from flipping to a
+  // different product after the app is backgrounded and resumed.
+  VpnProduct? _connectedProduct;
   VpnState _state = VpnState.disconnected;
   bool _routeRussianDirect = true;
   bool _busy = true;
+  bool _initialLoadComplete = false;
   bool _showLoginScreen = false;
   String? _accountToken;
   String? _accountEmail;
@@ -171,6 +175,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       _state = state;
       _accountToken = accountToken;
       _accountEmail = accountEmail;
+      _connectedProduct =
+          state == VpnState.connected ? selectedProduct : null;
     });
 
     await _refreshAllPending(silent: true);
@@ -180,7 +186,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     }
 
     if (mounted) {
-      setState(() => _busy = false);
+      setState(() {
+        _busy = false;
+        _initialLoadComplete = true;
+      });
     }
     _startAccessMonitoring();
   }
@@ -244,7 +253,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       }
     } catch (_) {
       if (!silent) {
-        _showMessage('Не удалось активировать пробный доступ.');
+        _showMessage(
+            'Не удалось активировать пробный доступ.');
       }
     } finally {
       if (mounted && !silent) {
@@ -285,7 +295,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     final password = _loginPasswordController.text;
 
     if (email.isEmpty || password.length < 8) {
-      _showMessage('Введите email и пароль не короче 8 символов.');
+      _showMessage(
+          'Введите email и пароль не короче 8 символов.');
       return;
     }
 
@@ -298,7 +309,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       final snapshot = await _api.login(email: email, password: password);
       final token = snapshot.token;
       if (token == null || token.isEmpty) {
-        throw const IronVpnApiException('Сервер не вернул сессию аккаунта', 0);
+        throw const IronVpnApiException(
+            'Сервер не вернул сессию аккаунта', 0);
       }
 
       await _store.saveAccount(token: token, email: snapshot.email);
@@ -363,7 +375,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         if (mounted) {
           setState(() {
             _showLoginScreen = true;
-            _message = silent ? null : 'Сессия завершена. Войдите снова.';
+            _message = silent
+                ? null
+                : 'Сессия завершена. Войдите снова.';
           });
         }
       }
@@ -372,7 +386,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       }
     } catch (_) {
       if (!silent) {
-        _showMessage('Не удалось обновить данные аккаунта.');
+        _showMessage(
+            'Не удалось обновить данные аккаунта.');
       }
     } finally {
       if (mounted && !silent) {
@@ -397,16 +412,19 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       }
     }
 
-    VpnProduct? activeProduct;
-    for (final product in VpnProduct.values) {
-      if (_subscriptions[product]?.isActive == true) {
-        activeProduct = product;
-        break;
+    final selectedStillActive = _subscriptions[_selectedProduct]?.isActive == true;
+    if (!selectedStillActive && _connectedProduct == null) {
+      VpnProduct? activeProduct;
+      for (final product in VpnProduct.values) {
+        if (_subscriptions[product]?.isActive == true) {
+          activeProduct = product;
+          break;
+        }
       }
-    }
-    if (activeProduct != null) {
-      _selectedProduct = activeProduct;
-      await _store.saveSelectedProduct(activeProduct);
+      if (activeProduct != null) {
+        _selectedProduct = activeProduct;
+        await _store.saveSelectedProduct(activeProduct);
+      }
     }
   }
 
@@ -424,7 +442,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       setState(() {
         _busy = false;
         _showLoginScreen = true;
-        _message = 'Вы вышли из аккаунта. Локальный доступ удалён.';
+        _message =
+            'Вы вышли из аккаунта. Локальный доступ удалён.';
       });
     }
   }
@@ -474,7 +493,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
             Future<void> submit() async {
               final email = emailController.text.trim();
               if (email.isEmpty) {
-                setDialogState(() => dialogError = 'Введите email аккаунта.');
+                setDialogState(() =>
+                    dialogError = 'Введите email аккаунта.');
                 return;
               }
 
@@ -546,14 +566,17 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                 if (dialogContext.mounted) {
                   setDialogState(() {
                     dialogBusy = false;
-                    dialogError = 'Не удалось изменить пароль.';
+                    dialogError =
+                        'Не удалось изменить пароль.';
                   });
                 }
               }
             }
 
             return AlertDialog(
-              title: Text(codeSent ? 'Введите код' : 'Восстановление пароля'),
+              title: Text(codeSent
+                  ? 'Введите код'
+                  : 'Восстановление пароля'),
               content: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -688,7 +711,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     setState(() {
       _access[access.product] = access;
       _selectedProduct = access.product;
-      _message = 'Доступ привязан. Проверяю статус.';
+      _message =
+          'Доступ привязан. Проверяю статус.';
     });
     await _refreshSubscription(access.product);
   }
@@ -702,7 +726,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         _state == VpnState.connecting ||
         _state == VpnState.disconnecting) {
       setState(() {
-        _message = 'Сначала отключите подключение, затем выберите другой тип.';
+        _message =
+            'Сначала отключите подключение, затем выберите другой тип.';
       });
       return;
     }
@@ -765,7 +790,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           _state = VpnState.disconnected;
           _showLoginScreen = true;
           if (!silent) {
-            _message = 'Войдите в аккаунт, чтобы использовать подписку.';
+            _message =
+                'Войдите в аккаунт, чтобы использовать подписку.';
           }
         });
         return;
@@ -785,6 +811,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       final selectedHasStoredAccess = _access[_selectedProduct] != null ||
           _profiles[_selectedProduct] != null;
       final shouldSelectProduct = subscription.isActive &&
+          _connectedProduct == null &&
           (product == _selectedProduct || !selectedHasStoredAccess) &&
           (!hadAnyActive || !_isActive(_selectedProduct));
 
@@ -803,9 +830,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         if (shouldSelectProduct) {
           _selectedProduct = product;
         }
-        if (!silent) {
-          _message = subscription.isActive
-              ? '${product.title}: подписка активна, конфиг настроен.'
+          if (!silent) {
+            _message = subscription.isActive
+              ? '${product.title}: доступ есть, конфиг настроен.'
               : subscription.isTrial
                   ? 'Пробный доступ завершён. Войдите в аккаунт.'
                   : '${product.title}: активная подписка не найдена.';
@@ -833,14 +860,16 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     }
     final access = _access[VpnProduct.amneziaWg];
     if (access == null) {
-      _showMessage('Нет активного конфига для обновления.');
+      _showMessage(
+          'Нет активного конфига для обновления.');
       return;
     }
     if (_state == VpnState.connected ||
         _state == VpnState.connecting ||
         _state == VpnState.disconnecting) {
       setState(() {
-        _message = 'Сначала отключите подключение, затем обновите конфиг.';
+        _message =
+            'Сначала отключите подключение, затем обновите конфиг.';
       });
       return;
     }
@@ -859,12 +888,14 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         return;
       }
       setState(() {
-        _message = 'Конфиг обновлён. Если были подключены — подключитесь заново.';
+        _message =
+            'Конфиг обновлён. Если были подключены — подключитесь заново.';
       });
     } on IronVpnApiException catch (error) {
       _showMessage(error.message);
     } catch (_) {
-      _showMessage('Не удалось обновить конфиг. Попробуйте позже.');
+      _showMessage(
+          'Не удалось обновить конфиг. Попробуйте позже.');
     } finally {
       if (mounted) {
         setState(() => _busy = false);
@@ -881,8 +912,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         builder: (sheetContext) {
           return StatefulBuilder(
             builder: (context, setSheetState) {
-              Future<void> runAndRefresh(
-                  Future<void> Function() action) async {
+              Future<void> runAndRefresh(Future<void> Function() action) async {
                 await action();
                 if (mounted) {
                   setSheetState(() {});
@@ -894,8 +924,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                 child: _SettingsPage(
                   selected: sheetSelected,
                   activeProducts: {
-                    for (final item in VpnProduct.values)
-                      item: _isActive(item),
+                    for (final item in VpnProduct.values) item: _isActive(item),
                   },
                   routeRussianDirect: _routeRussianDirect,
                   busy: _busy,
@@ -906,7 +935,11 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                     widget.onDarkThemeChanged(value);
                   },
                   onRouteChanged: (value) async {
-                    await _toggleRussianDirect(value);
+                    final operation = _toggleRussianDirect(value);
+                    if (mounted) {
+                      setSheetState(() {});
+                    }
+                    await operation;
                     if (mounted) {
                       setSheetState(() {});
                     }
@@ -936,7 +969,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     final subscription = _subscriptions[_selectedProduct];
 
     if (profile == null || subscription == null || !subscription.isActive) {
-      _showMessage('Доступ закончился. Войдите в аккаунт.');
+      _showMessage(
+          'Доступ закончился. Войдите в аккаунт.');
       return;
     }
 
@@ -946,12 +980,15 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       _message = null;
     });
 
+    await _store.saveSelectedProduct(_selectedProduct);
+
     final prepared = await _vpn.prepare();
     if (!prepared) {
       setState(() {
         _busy = false;
         _state = VpnState.disconnected;
-        _message = 'Разрешите подключение в системном окне.';
+        _message =
+            'Разрешите подключение в системном окне.';
       });
       return;
     }
@@ -964,12 +1001,16 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     setState(() {
       _busy = false;
       _state = nextState;
+      _connectedProduct =
+          nextState == VpnState.connected ? profile.product : null;
       if (nextState == VpnState.unsupported) {
-        _message = '${profile.product.title}: движок ещё не подключён.';
+        _message =
+            '${profile.product.title}: движок ещё не подключён.';
       } else if (nextState == VpnState.error) {
         _message = 'Ошибка запуска.';
       } else if (nextState == VpnState.disconnected) {
-        _message = 'Не удалось запустить. Попробуйте ещё раз.';
+        _message =
+            'Не удалось запустить. Попробуйте ещё раз.';
       }
     });
   }
@@ -990,6 +1031,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     setState(() {
       _busy = false;
       _state = nextState;
+      if (nextState != VpnState.connecting &&
+          nextState != VpnState.connected) {
+        _connectedProduct = null;
+      }
     });
   }
 
@@ -999,7 +1044,16 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       return;
     }
 
-    setState(() => _state = state);
+    setState(() {
+      _state = state;
+      // Keep the selected product in sync with the live tunnel so resuming the
+      // app never shows the wrong product as connected.
+      if (state == VpnState.connected && _connectedProduct != null) {
+        _selectedProduct = _connectedProduct!;
+      } else if (state == VpnState.disconnected) {
+        _connectedProduct = null;
+      }
+    });
   }
 
   Future<void> _toggleRussianDirect(bool value) async {
@@ -1007,6 +1061,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       return;
     }
 
+    final previousValue = _routeRussianDirect;
     final shouldReconnect =
         _state == VpnState.connected && _isActive(_selectedProduct);
     final profile = _profiles[_selectedProduct];
@@ -1015,27 +1070,50 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       setState(() {
         _busy = true;
         _routeRussianDirect = value;
+        if (shouldReconnect) {
+          _state = VpnState.connecting;
+        }
         _message = null;
       });
     }
 
-    await _store.saveRouteRussianServicesDirect(value);
+    var nextState = shouldReconnect ? VpnState.connecting : _state;
+    var applied = true;
 
-    var nextState = _state;
-    if (shouldReconnect && profile != null) {
-      await _vpn.stop();
-      nextState = await _vpn.start(
-        profile: profile,
-        routeRussianServicesDirect: value,
-      );
+    try {
+      await _store.saveRouteRussianServicesDirect(value);
+
+      if (shouldReconnect && profile != null) {
+        await _vpn.stop();
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+        nextState = await _vpn.start(
+          profile: profile,
+          routeRussianServicesDirect: value,
+        );
+
+        if (nextState != VpnState.connected) {
+          applied = false;
+          await _store.saveRouteRussianServicesDirect(previousValue);
+          await Future<void>.delayed(const Duration(milliseconds: 250));
+          nextState = await _vpn.start(
+            profile: profile,
+            routeRussianServicesDirect: previousValue,
+          );
+        }
+      }
+    } catch (_) {
+      applied = false;
+      await _store.saveRouteRussianServicesDirect(previousValue);
+      nextState = await _vpn.status();
     }
 
     if (mounted) {
       setState(() {
         _busy = false;
+        _routeRussianDirect = applied ? value : previousValue;
         _state = nextState;
-        if (shouldReconnect && nextState != VpnState.connected) {
-          _message = 'Не удалось применить режим. Подключите ещё раз.';
+        if (!applied || (shouldReconnect && nextState != VpnState.connected)) {
+          _message = '\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u0440\u0438\u043c\u0435\u043d\u0438\u0442\u044c \u0440\u0435\u0436\u0438\u043c. \u041f\u043e\u0434\u043a\u043b\u044e\u0447\u0438\u0442\u0435\u0441\u044c \u0435\u0449\u0435 \u0440\u0430\u0437.';
         }
       });
     }
@@ -1076,6 +1154,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     final active = _isActive(_selectedProduct);
     final subscription = _subscriptions[_selectedProduct];
     final trialUsed = _subscriptions[VpnProduct.vless]?.isTrial == true;
+    final initialLoading = !_initialLoadComplete;
 
     return Theme(
       data: _productTheme(context, _selectedProduct),
@@ -1083,145 +1162,160 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         body: _AppBackground(
           product: _selectedProduct,
           child: SafeArea(
-            child: hasAnyActive && !_showLoginScreen
-                ? Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 18, 20, 22),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        _Header(
-                          product: _selectedProduct,
-                          state: _state,
-                          onSettings: _openSettings,
-                        ),
-                        const SizedBox(height: 18),
-                        Expanded(
-                          child: LayoutBuilder(
-                            builder: (context, constraints) {
-                              final compact = constraints.maxHeight < 680;
+            child: initialLoading
+                ? _InitialLoadingView(
+                    product: _selectedProduct,
+                    state: _state,
+                  )
+                : hasAnyActive && !_showLoginScreen
+                    ? Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 18, 20, 22),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            _Header(
+                              product: _selectedProduct,
+                              state: _state,
+                              onSettings: _openSettings,
+                            ),
+                            const SizedBox(height: 18),
+                            Expanded(
+                              child: LayoutBuilder(
+                                builder: (context, constraints) {
+                                  final compact = constraints.maxHeight < 680;
 
-                              return Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  _ModeSelector(
-                                    selected: _selectedProduct,
-                                    activeProducts: {
-                                      for (final item in VpnProduct.values)
-                                        item: _isActive(item),
-                                    },
-                                    pendingProducts: {
-                                      for (final item in VpnProduct.values)
-                                        item: _isPending(item),
-                                    },
-                                    compact: compact,
-                                    onSelected: _busy ? null : _selectProduct,
-                                  ),
-                                  SizedBox(height: compact ? 10 : 16),
-                                  _RoundConnectButton(
-                                    busy: _busy,
-                                    enabled: active,
-                                    connected: connected,
-                                    product: _selectedProduct,
-                                    compact: compact,
-                                    onConnect: _connect,
-                                    onDisconnect: _disconnect,
-                                  ),
-                                  SizedBox(height: compact ? 10 : 14),
-                                  Expanded(
-                                    child: ScrollConfiguration(
-                                      behavior:
-                                          const _NoStretchScrollBehavior(),
-                                      child: SingleChildScrollView(
-                                        physics:
-                                            const NeverScrollableScrollPhysics(),
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.stretch,
-                                          children: [
-                                            _SubscriptionPanel(
-                                              product: _selectedProduct,
-                                              subscription: subscription,
-                                              hasAccess:
-                                                  _access[_selectedProduct] !=
+                                  return Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: [
+                                      _ModeSelector(
+                                        selected: _selectedProduct,
+                                        activeProducts: {
+                                          for (final item in VpnProduct.values)
+                                            item: _isActive(item),
+                                        },
+                                        pendingProducts: {
+                                          for (final item in VpnProduct.values)
+                                            item: _isPending(item),
+                                        },
+                                        compact: compact,
+                                        onSelected:
+                                            _busy ? null : _selectProduct,
+                                      ),
+                                      SizedBox(height: compact ? 10 : 16),
+                                      _RoundConnectButton(
+                                        busy: _busy,
+                                        enabled: active,
+                                        connected: connected,
+                                        connecting:
+                                            _state == VpnState.connecting,
+                                        product: _selectedProduct,
+                                        compact: compact,
+                                        onConnect: _connect,
+                                        onDisconnect: _disconnect,
+                                      ),
+                                      SizedBox(height: compact ? 10 : 14),
+                                      Expanded(
+                                        child: ScrollConfiguration(
+                                          behavior:
+                                              const _NoStretchScrollBehavior(),
+                                          child: SingleChildScrollView(
+                                            physics:
+                                                const NeverScrollableScrollPhysics(),
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.stretch,
+                                              children: [
+                                                _SubscriptionPanel(
+                                                  product: _selectedProduct,
+                                                  subscription: subscription,
+                                                  hasAccess: _access[
+                                                          _selectedProduct] !=
                                                       null,
-                                              busy: _busy,
-                                              compact: compact,
-                                              onRefresh: () =>
-                                                  _refreshSubscription(
-                                                _selectedProduct,
-                                              ),
-                                              onReplaceConfig: _selectedProduct ==
-                                                      VpnProduct.amneziaWg
-                                                  ? _replaceAwgConfig
-                                                  : null,
+                                                  busy: _busy,
+                                                  compact: compact,
+                                                  onRefresh: () =>
+                                                      _refreshSubscription(
+                                                    _selectedProduct,
+                                                  ),
+                                                  onReplaceConfig:
+                                                      _selectedProduct ==
+                                                              VpnProduct
+                                                                  .amneziaWg
+                                                          ? _replaceAwgConfig
+                                                          : null,
+                                                ),
+                                                if (_message != null) ...[
+                                                  SizedBox(
+                                                      height:
+                                                          compact ? 10 : 14),
+                                                  _MessagePanel(
+                                                    product: _selectedProduct,
+                                                    message: _message!,
+                                                  ),
+                                                ],
+                                              ],
                                             ),
-                                            if (_message != null) ...[
-                                              SizedBox(
-                                                  height: compact ? 10 : 14),
-                                              _MessagePanel(
-                                                product: _selectedProduct,
-                                                message: _message!,
-                                              ),
-                                            ],
-                                          ],
+                                          ),
                                         ),
                                       ),
-                                    ),
-                                  ),
-                                  if (_accountEmail == null) ...[
-                                    SizedBox(height: compact ? 10 : 14),
-                                    FilledButton.icon(
-                                      onPressed:
-                                          _busy ? null : _openLoginScreen,
-                                      icon: const Icon(Icons.login_rounded),
-                                      label: const Text('Войти в аккаунт'),
-                                    ),
-                                  ],
-                                ],
-                              );
-                            },
-                          ),
+                                      if (_accountEmail == null) ...[
+                                        SizedBox(height: compact ? 10 : 14),
+                                        FilledButton.icon(
+                                          onPressed:
+                                              _busy ? null : _openLoginScreen,
+                                          icon: const Icon(Icons.login_rounded),
+                                          label: const Text(
+                                              'Войти в аккаунт'),
+                                        ),
+                                      ],
+                                    ],
+                                  );
+                                },
+                              ),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-                  )
-                : ScrollConfiguration(
-                    behavior: const _NoStretchScrollBehavior(),
-                    child: ListView(
-                      physics: const ClampingScrollPhysics(),
-                      padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
-                      children: [
-                        _Header(
-                          product: _selectedProduct,
-                          state: _state,
-                          onSettings: null,
+                      )
+                    : ScrollConfiguration(
+                        behavior: const _NoStretchScrollBehavior(),
+                        child: ListView(
+                          physics: const ClampingScrollPhysics(),
+                          padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
+                          children: [
+                            _Header(
+                              product: _selectedProduct,
+                              state: _state,
+                              onSettings: null,
+                            ),
+                            const SizedBox(height: 20),
+                            _AccessGate(
+                              busy: _busy,
+                              accountEmail: _accountEmail,
+                              trialUsed: trialUsed,
+                              emailController: _loginEmailController,
+                              passwordController: _loginPasswordController,
+                              onLogin: _login,
+                              onForgotPassword: _showPasswordRecovery,
+                              onTrial: () => _claimTrial(),
+                              onOpenAccount: _openAccountSite,
+                              onRefreshAccount: () => _syncAccount(),
+                              onLogout: _logout,
+                              onBack: hasAnyActive
+                                  ? () =>
+                                      setState(() => _showLoginScreen = false)
+                                  : null,
+                            ),
+                            if (_message != null) ...[
+                              const SizedBox(height: 16),
+                              _MessagePanel(
+                                product: _selectedProduct,
+                                message: _message!,
+                              ),
+                            ],
+                          ],
                         ),
-                        const SizedBox(height: 20),
-                        _AccessGate(
-                          busy: _busy,
-                          accountEmail: _accountEmail,
-                          trialUsed: trialUsed,
-                          emailController: _loginEmailController,
-                          passwordController: _loginPasswordController,
-                          onLogin: _login,
-                          onForgotPassword: _showPasswordRecovery,
-                          onTrial: () => _claimTrial(),
-                          onOpenAccount: _openAccountSite,
-                          onRefreshAccount: () => _syncAccount(),
-                          onBack: hasAnyActive
-                              ? () => setState(() => _showLoginScreen = false)
-                              : null,
-                        ),
-                        if (_message != null) ...[
-                          const SizedBox(height: 16),
-                          _MessagePanel(
-                            product: _selectedProduct,
-                            message: _message!,
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
+                      ),
           ),
         ),
       ),
@@ -1244,6 +1338,45 @@ class _NoStretchScrollBehavior extends ScrollBehavior {
   @override
   ScrollPhysics getScrollPhysics(BuildContext context) {
     return const ClampingScrollPhysics();
+  }
+}
+
+class _InitialLoadingView extends StatelessWidget {
+  const _InitialLoadingView({
+    required this.product,
+    required this.state,
+  });
+
+  final VpnProduct product;
+  final VpnState state;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 18, 20, 22),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _Header(
+            product: product,
+            state: state,
+            onSettings: null,
+          ),
+          const Spacer(),
+          Center(
+            child: SizedBox(
+              width: 34,
+              height: 34,
+              child: CircularProgressIndicator(
+                strokeWidth: 3,
+                color: AppColors.accentFor(product),
+              ),
+            ),
+          ),
+          const Spacer(),
+        ],
+      ),
+    );
   }
 }
 
@@ -1420,7 +1553,7 @@ class _ProductCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final status = active
-        ? 'Активен'
+        ? 'Доступ есть'
         : pending
             ? 'Проверяется'
             : 'Нет доступа';
@@ -1714,11 +1847,59 @@ class _ModeSegmentButton extends StatelessWidget {
 /// cheap [RadialGradient] pulse ring, all isolated behind a [RepaintBoundary]
 /// so only this widget repaints while it animates. The pulse controller only
 /// runs while connected, so an idle screen costs nothing.
+// Futuristic "link-up" ring: a faint track plus a bright sweeping arc that
+// fades into transparency, rotated continuously while connecting.
+class _ConnectingRingPainter extends CustomPainter {
+  _ConnectingRingPainter({
+    required this.color,
+    required this.track,
+    required this.strokeWidth,
+  });
+
+  final Color color;
+  final Color track;
+  final double strokeWidth;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = (size.shortestSide - strokeWidth) / 2;
+    final rect = Rect.fromCircle(center: center, radius: radius);
+
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = strokeWidth
+        ..color = track,
+    );
+
+    final sweep = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.round
+      ..shader = SweepGradient(
+        colors: [color.withValues(alpha: 0), color],
+        stops: const [0.0, 1.0],
+        transform: const GradientRotation(-1.5708),
+      ).createShader(rect);
+    canvas.drawArc(rect, -1.5708, 3.9, false, sweep);
+  }
+
+  @override
+  bool shouldRepaint(covariant _ConnectingRingPainter old) =>
+      old.color != color ||
+      old.track != track ||
+      old.strokeWidth != strokeWidth;
+}
+
 class _RoundConnectButton extends StatefulWidget {
   const _RoundConnectButton({
     required this.busy,
     required this.enabled,
     required this.connected,
+    required this.connecting,
     required this.product,
     required this.compact,
     required this.onConnect,
@@ -1728,6 +1909,7 @@ class _RoundConnectButton extends StatefulWidget {
   final bool busy;
   final bool enabled;
   final bool connected;
+  final bool connecting;
   final VpnProduct product;
   final bool compact;
   final VoidCallback onConnect;
@@ -1738,10 +1920,14 @@ class _RoundConnectButton extends StatefulWidget {
 }
 
 class _RoundConnectButtonState extends State<_RoundConnectButton>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   late final AnimationController _pulse = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 1900),
+  );
+  late final AnimationController _spin = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1100),
   );
   bool _pressed = false;
 
@@ -1750,6 +1936,9 @@ class _RoundConnectButtonState extends State<_RoundConnectButton>
     super.initState();
     if (widget.connected) {
       _pulse.repeat(reverse: true);
+    }
+    if (widget.connecting) {
+      _spin.repeat();
     }
   }
 
@@ -1762,11 +1951,18 @@ class _RoundConnectButtonState extends State<_RoundConnectButton>
       _pulse.stop();
       _pulse.value = 0;
     }
+    if (widget.connecting && !_spin.isAnimating) {
+      _spin.repeat();
+    } else if (!widget.connecting && _spin.isAnimating) {
+      _spin.stop();
+      _spin.value = 0;
+    }
   }
 
   @override
   void dispose() {
     _pulse.dispose();
+    _spin.dispose();
     super.dispose();
   }
 
@@ -1777,11 +1973,13 @@ class _RoundConnectButtonState extends State<_RoundConnectButton>
     final canTap = !widget.busy && widget.enabled;
     final size = widget.compact ? 152.0 : 178.0;
     final iconSize = widget.compact ? 60.0 : 70.0;
-    final stateLabel = widget.connected
-        ? '${widget.product.shortTitle} включён'
-        : widget.enabled
-            ? 'Нажмите для подключения'
-            : 'Недоступно';
+    final stateLabel = widget.connecting
+        ? 'Подключение…'
+        : widget.connected
+            ? '${widget.product.shortTitle} включён'
+            : widget.enabled
+                ? 'Нажмите для подключения'
+                : 'Недоступно';
 
     return Column(
       children: [
@@ -1813,10 +2011,24 @@ class _RoundConnectButtonState extends State<_RoundConnectButton>
                       );
                     },
                   ),
+                if (widget.connecting)
+                  RotationTransition(
+                    turns: _spin,
+                    child: CustomPaint(
+                      size: Size.square(size + 24),
+                      painter: _ConnectingRingPainter(
+                        color: accent,
+                        track: accent.withValues(alpha: 0.12),
+                        strokeWidth: widget.compact ? 4.5 : 5.5,
+                      ),
+                    ),
+                  ),
                 Semantics(
                   button: true,
                   enabled: canTap,
-                  label: widget.connected ? 'Отключить' : 'Подключить',
+                  label: widget.connected
+                      ? 'Отключить'
+                      : 'Подключить',
                   child: GestureDetector(
                     onTap: canTap
                         ? (widget.connected
@@ -1938,7 +2150,7 @@ class _SubscriptionPanel extends StatelessWidget {
     final title = active
         ? subscription?.isTrial == true
             ? 'Пробный доступ'
-            : 'Подписка активна'
+            : 'Доступ есть'
         : hasAccess
             ? 'Проверяем доступ'
             : 'Нет доступа';
@@ -2154,6 +2366,7 @@ class _AccessGate extends StatelessWidget {
     required this.onTrial,
     required this.onOpenAccount,
     required this.onRefreshAccount,
+    required this.onLogout,
     required this.onBack,
   });
 
@@ -2167,6 +2380,7 @@ class _AccessGate extends StatelessWidget {
   final VoidCallback onTrial;
   final VoidCallback onOpenAccount;
   final VoidCallback onRefreshAccount;
+  final VoidCallback onLogout;
   final VoidCallback? onBack;
 
   @override
@@ -2238,6 +2452,12 @@ class _AccessGate extends StatelessWidget {
               icon: Icon(Icons.open_in_new_rounded),
               label: Text('Открыть личный кабинет'),
             ),
+            const SizedBox(height: 10),
+            TextButton.icon(
+              onPressed: busy ? null : onLogout,
+              icon: Icon(Icons.logout_rounded),
+              label: Text('Выйти из аккаунта'),
+            ),
           ] else ...[
             TextField(
               controller: emailController,
@@ -2276,7 +2496,8 @@ class _AccessGate extends StatelessWidget {
             FilledButton.icon(
               onPressed: busy ? null : onLogin,
               icon: Icon(Icons.login_rounded),
-              label: Text(busy ? 'Проверяем доступ...' : 'Войти'),
+              label: Text(
+                  busy ? 'Проверяем доступ...' : 'Войти'),
             ),
             const SizedBox(height: 10),
             OutlinedButton.icon(
@@ -2350,7 +2571,8 @@ class _AccountPanel extends StatelessWidget {
                       ),
                     ),
                     Text(
-                      email ?? 'Пробный доступ без аккаунта',
+                      email ??
+                          'Пробный доступ без аккаунта',
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: AppColors.inkSoft,
@@ -2382,7 +2604,9 @@ class _AccountPanel extends StatelessWidget {
             onPressed: busy ? null : onOpenAccount,
             icon: Icon(Icons.open_in_new_rounded),
             label: Text(
-              signedIn ? 'Личный кабинет' : 'Создать аккаунт',
+              signedIn
+                  ? 'Личный кабинет'
+                  : 'Создать аккаунт',
             ),
           ),
           if (signedIn) ...[
@@ -2555,7 +2779,7 @@ class _SettingsPage extends StatelessWidget {
                         _RoutePanel(
                           product: selected,
                           value: routeRussianDirect,
-                          onChanged: onRouteChanged,
+                          onChanged: busy ? null : onRouteChanged,
                         ),
                       ] else ...[
                         _AccountPurchasePanel(
@@ -2630,7 +2854,9 @@ class _ThemePanel extends StatelessWidget {
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  darkTheme ? 'Тёмная тема' : 'Светлая тема',
+                  darkTheme
+                      ? 'Тёмная тема'
+                      : 'Светлая тема',
                   style: TextStyle(
                     color: AppColors.inkSoft,
                     fontWeight: FontWeight.w600,
