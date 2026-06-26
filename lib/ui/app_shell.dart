@@ -1556,7 +1556,7 @@ class _ProductCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final status = active
-        ? 'Доступ есть'
+        ? 'Доступ активирован'
         : pending
             ? 'Проверяется'
             : 'Нет доступа';
@@ -2153,7 +2153,7 @@ class _SubscriptionPanel extends StatelessWidget {
     final title = active
         ? subscription?.isTrial == true
             ? 'Пробный доступ'
-            : 'Доступ есть'
+            : 'Доступ активирован'
         : hasAccess
             ? 'Проверяем доступ'
             : 'Нет доступа';

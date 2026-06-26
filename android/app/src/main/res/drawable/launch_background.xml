@@ -6,11 +6,8 @@
         </shape>
     </item>
     <item
-        android:width="220dp"
-        android:height="220dp"
-        android:gravity="center">
-        <bitmap
-            android:gravity="fill"
-            android:src="@drawable/launch_logo_padded" />
-    </item>
+        android:width="160dp"
+        android:height="160dp"
+        android:drawable="@drawable/launch_logo"
+        android:gravity="center" />
 </layer-list>
