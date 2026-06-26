@@ -1916,13 +1916,22 @@ class _ConnectingRingPainter extends CustomPainter {
         ..color = track,
     );
 
+    // The comet fades in from transparent (tail) to opaque (head). The extra
+    // transparent stop past the head keeps the SweepGradient's wrap-around seam
+    // transparent, so the round cap at the arc's start has nothing opaque to
+    // latch onto — otherwise it rendered as a stray dot at the tail.
     final sweep = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = strokeWidth
       ..strokeCap = StrokeCap.round
       ..shader = SweepGradient(
-        colors: [color.withValues(alpha: 0), color],
-        stops: const [0.0, 1.0],
+        colors: [
+          color.withValues(alpha: 0),
+          color,
+          color,
+          color.withValues(alpha: 0),
+        ],
+        stops: const [0.0, 0.58, 0.66, 0.82],
         transform: const GradientRotation(-1.5708),
       ).createShader(rect);
     canvas.drawArc(rect, -1.5708, 3.9, false, sweep);
