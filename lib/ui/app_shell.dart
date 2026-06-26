@@ -121,6 +121,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   String? _accountToken;
   String? _accountEmail;
   String? _message;
+  // Transient warning shown as a toast floating over the VPN-type selector
+  // (e.g. "disconnect first before switching type"). Auto-dismisses.
+  String? _typeToast;
+  Timer? _typeToastTimer;
   int _vpnAccessVersion = 0;
 
   @override
@@ -135,6 +139,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _accessTimer?.cancel();
+    _typeToastTimer?.cancel();
     _linkSub?.cancel();
     _loginEmailController.dispose();
     _loginPasswordController.dispose();
@@ -728,10 +733,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     if (_state == VpnState.connected ||
         _state == VpnState.connecting ||
         _state == VpnState.disconnecting) {
-      setState(() {
-        _message =
-            'Сначала отключите подключение, затем выберите другой тип.';
-      });
+      _showTypeToast(
+        'Сначала отключите подключение, затем выберите другой тип.',
+      );
       return;
     }
 
@@ -856,12 +860,14 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     }
   }
 
-  // Re-issues the AmneziaWG config (new server endpoint) and re-imports it.
-  Future<void> _replaceAwgConfig() async {
+  // Re-issues the selected product's config (new server endpoint) and
+  // re-imports it. Works for both VLESS and AmneziaWG.
+  Future<void> _replaceConfig() async {
     if (_busy) {
       return;
     }
-    final access = _access[VpnProduct.amneziaWg];
+    final product = _selectedProduct;
+    final access = _access[product];
     if (access == null) {
       _showMessage(
           'Нет активного конфига для обновления.');
@@ -870,10 +876,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     if (_state == VpnState.connected ||
         _state == VpnState.connecting ||
         _state == VpnState.disconnecting) {
-      setState(() {
-        _message =
-            'Сначала отключите подключение, затем обновите конфиг.';
-      });
+      _showTypeToast(
+        'Сначала отключите подключение, затем обновите конфигурацию.',
+      );
       return;
     }
 
@@ -892,13 +897,13 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       }
       setState(() {
         _message =
-            'Конфиг обновлён. Если были подключены — подключитесь заново.';
+            'Конфигурация обновлена. Если были подключены — подключитесь заново.';
       });
     } on IronVpnApiException catch (error) {
       _showMessage(error.message);
     } catch (_) {
       _showMessage(
-          'Не удалось обновить конфиг. Попробуйте позже.');
+          'Не удалось обновить конфигурацию. Попробуйте позже.');
     } finally {
       if (mounted) {
         setState(() => _busy = false);
@@ -1133,6 +1138,28 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     });
   }
 
+  // Shows a transient toast floating over the VPN-type selector. It clears
+  // itself after a few seconds, or immediately when tapped (_dismissTypeToast).
+  void _showTypeToast(String message) {
+    if (!mounted) {
+      return;
+    }
+    _typeToastTimer?.cancel();
+    setState(() => _typeToast = message);
+    _typeToastTimer = Timer(const Duration(milliseconds: 3500), () {
+      if (mounted) {
+        setState(() => _typeToast = null);
+      }
+    });
+  }
+
+  void _dismissTypeToast() {
+    _typeToastTimer?.cancel();
+    if (mounted) {
+      setState(() => _typeToast = null);
+    }
+  }
+
   bool _isActive(VpnProduct product) {
     return _subscriptions[product]?.isActive == true &&
         _profiles[product] != null;
@@ -1191,19 +1218,34 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                                     crossAxisAlignment:
                                         CrossAxisAlignment.stretch,
                                     children: [
-                                      _ModeSelector(
-                                        selected: _selectedProduct,
-                                        activeProducts: {
-                                          for (final item in VpnProduct.values)
-                                            item: _isActive(item),
-                                        },
-                                        pendingProducts: {
-                                          for (final item in VpnProduct.values)
-                                            item: _isPending(item),
-                                        },
-                                        compact: compact,
-                                        onSelected:
-                                            _busy ? null : _selectProduct,
+                                      Stack(
+                                        clipBehavior: Clip.none,
+                                        children: [
+                                          _ModeSelector(
+                                            selected: _selectedProduct,
+                                            activeProducts: {
+                                              for (final item
+                                                  in VpnProduct.values)
+                                                item: _isActive(item),
+                                            },
+                                            pendingProducts: {
+                                              for (final item
+                                                  in VpnProduct.values)
+                                                item: _isPending(item),
+                                            },
+                                            compact: compact,
+                                            onSelected:
+                                                _busy ? null : _selectProduct,
+                                          ),
+                                          if (_typeToast != null)
+                                            Positioned.fill(
+                                              child: _TypeToast(
+                                                message: _typeToast!,
+                                                product: _selectedProduct,
+                                                onDismiss: _dismissTypeToast,
+                                              ),
+                                            ),
+                                        ],
                                       ),
                                       SizedBox(height: compact ? 10 : 16),
                                       _RoundConnectButton(
@@ -1242,11 +1284,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                                                     _selectedProduct,
                                                   ),
                                                   onReplaceConfig:
-                                                      _selectedProduct ==
-                                                              VpnProduct
-                                                                  .amneziaWg
-                                                          ? _replaceAwgConfig
-                                                          : null,
+                                                      _replaceConfig,
                                                 ),
                                                 if (_message != null) ...[
                                                   SizedBox(
@@ -2214,9 +2252,7 @@ class _SubscriptionPanel extends StatelessWidget {
               color: accent,
             ),
           ),
-          if (product == VpnProduct.amneziaWg &&
-              hasAccess &&
-              onReplaceConfig != null) ...[
+          if (hasAccess && onReplaceConfig != null) ...[
             SizedBox(height: compact ? 8 : 12),
             Align(
               alignment: Alignment.centerLeft,
@@ -2230,12 +2266,12 @@ class _SubscriptionPanel extends StatelessWidget {
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
                 icon: const Icon(Icons.sync_rounded, size: 18),
-                label: const Text('Обновить конфиг'),
+                label: const Text('Обновить конфигурацию'),
               ),
             ),
             Text(
-              'Если AmneziaWG перестал подключаться — обновите конфиг: '
-              'сервер обновился, нужен свежий.',
+              'Если перестал подключаться — обновите конфигурацию: '
+              'сервер обновился, нужен свежий конфиг.',
               style: TextStyle(
                 fontSize: 12.5,
                 height: 1.4,
@@ -3138,6 +3174,81 @@ class _MessagePanel extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// Floating warning shown over the VPN-type selector (e.g. when the user tries
+// to switch type while connected). Tap anywhere on it to dismiss; the parent
+// also auto-dismisses it after a few seconds.
+class _TypeToast extends StatelessWidget {
+  const _TypeToast({
+    required this.message,
+    required this.product,
+    required this.onDismiss,
+  });
+
+  final String message;
+  final VpnProduct product;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final surface = Color.alphaBlend(
+      AppColors.warn.withValues(alpha: AppColors.isDark ? 0.16 : 0.12),
+      AppColors.backgroundAlt,
+    );
+
+    return Center(
+      child: TweenAnimationBuilder<double>(
+        tween: Tween(begin: 0, end: 1),
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOut,
+        builder: (context, t, child) => Opacity(
+          opacity: t.clamp(0.0, 1.0),
+          child: Transform.translate(
+            offset: Offset(0, (1 - t) * -10),
+            child: child,
+          ),
+        ),
+        child: GestureDetector(
+          onTap: onDismiss,
+          behavior: HitTestBehavior.opaque,
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: surface,
+              borderRadius: AppRadii.pill,
+              border: Border.all(
+                color: AppColors.warn.withValues(alpha: 0.55),
+                width: 1.5,
+              ),
+              boxShadow: AppShadows.card,
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.lock_outline_rounded,
+                    color: AppColors.warn, size: 18),
+                const SizedBox(width: 9),
+                Flexible(
+                  child: Text(
+                    message,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: AppColors.ink,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 13,
+                      height: 1.25,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
