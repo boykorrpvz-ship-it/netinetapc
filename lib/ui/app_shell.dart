@@ -282,7 +282,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     if (subscription.isActive) {
       final profile = StoredVpnProfile.fromSubscription(subscription);
       await _store.saveVpnProfile(profile);
-      await _store.saveSelectedProduct(subscription.product);
+      // NB: do NOT persist the selected product here. This runs for every
+      // active product on sync, so the last one (AmneziaWG) would overwrite the
+      // user's choice — making a VLESS session reopen as "AWG". Selection is
+      // owned by _connect / _selectProduct / _handleIncomingLink only.
       _profiles[subscription.product] = profile;
     } else {
       await _store.clearVpnProfile(subscription.product);
