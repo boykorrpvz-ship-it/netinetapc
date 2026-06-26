@@ -60,17 +60,34 @@
         </activity>
 
         <!--
-            Service runs in the MAIN process (no android:process=":vpn").
-            A separate :vpn process was being killed by aggressive OEM task
-            killers (MIUI/Xiaomi); after a few kills the system marked it a
-            "bad process" and refused to start it, so startForegroundService
-            threw SecurityException("process is bad") -> the app showed
-            "Ошибка запуска". Hosting the foreground VPN service in the live
-            foreground UI process avoids that throttle and lets the in-process
-            engine state checks (SingBoxBridge/AmneziaWgBridge.isRunning) work.
+            The VPN engines (sing-box/libbox and AmneziaWG) are gomobile/Go
+            libraries that each bundle their own Go runtime. Activating a second
+            Go runtime in a process that already activated the other one crashes
+            natively (SIGSEGV) — which is what happened on a VPN type switch.
+            Each engine therefore runs in its OWN dedicated process (":box" /
+            ":awg"), so a process only ever activates a single runtime. This
+            isolates a native crash from the UI, avoids the type-switch crash,
+            and — because the processes are reused (never killed) between
+            connects — they are not repeatedly flagged a "bad process" by OEM
+            task killers, which previously surfaced as "Ошибка запуска".
         -->
         <service
-            android:name=".IronVpnService"
+            android:name=".BoxVpnService"
+            android:process=":box"
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="vpn" />
+        </service>
+
+        <service
+            android:name=".AwgVpnService"
+            android:process=":awg"
             android:permission="android.permission.BIND_VPN_SERVICE"
             android:exported="false"
             android:foregroundServiceType="specialUse">

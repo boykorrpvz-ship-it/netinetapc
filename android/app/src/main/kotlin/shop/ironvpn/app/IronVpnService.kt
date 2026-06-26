@@ -10,7 +10,12 @@ import android.net.VpnService
 import android.os.Build
 import android.util.Log
 
-class IronVpnService : VpnService() {
+// Base VPN service. Never started directly: the concrete subclasses
+// BoxVpnService (sing-box/VLESS) and AwgVpnService (AmneziaWG) are each pinned
+// to their own process (see AndroidManifest) so a given protocol's gomobile Go
+// runtime is only ever activated in a process dedicated to it. Activating both
+// engines' Go runtimes in one process crashes natively (SIGSEGV).
+open class IronVpnService : VpnService() {
     private var stopHandled = false
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {

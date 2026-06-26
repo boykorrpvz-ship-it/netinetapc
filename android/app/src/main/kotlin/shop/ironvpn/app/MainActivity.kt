@@ -87,7 +87,8 @@ class MainActivity : FlutterActivity() {
         routeRussianServicesDirect: Boolean,
     ) {
         VpnStateStore.set(this, "connecting")
-        val intent = Intent(this, IronVpnService::class.java).apply {
+        VpnStateStore.setProtocol(this, protocol)
+        val intent = Intent(this, serviceClassFor(protocol)).apply {
             action = IronVpnService.ACTION_START
             putExtra(IronVpnService.EXTRA_CONFIG_JSON, configJson)
             putExtra(IronVpnService.EXTRA_PROFILE_NAME, profileName)
@@ -121,10 +122,22 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun stopVpn() {
-        val intent = Intent(this, IronVpnService::class.java).apply {
+        val protocol = VpnStateStore.getProtocol(this)
+        val intent = Intent(this, serviceClassFor(protocol)).apply {
             action = IronVpnService.ACTION_STOP
         }
         startService(intent)
+    }
+
+    // Routes a start/stop intent to the per-protocol service process. AmneziaWG
+    // and sing-box each run in their own process so their Go runtimes never
+    // share a process (which would crash natively on a type switch).
+    private fun serviceClassFor(protocol: String?): Class<*> {
+        return if (protocol == PROTOCOL_AMNEZIA_WG) {
+            AwgVpnService::class.java
+        } else {
+            BoxVpnService::class.java
+        }
     }
 
     private fun currentVpnState(reconcile: Boolean): String {
@@ -181,5 +194,6 @@ class MainActivity : FlutterActivity() {
         private const val TAG = "MainActivity"
         private const val REQUEST_VPN_PREPARE = 4201
         private const val TRANSIENT_STATE_TTL_MS = 8_000L
+        private const val PROTOCOL_AMNEZIA_WG = "amneziawg"
     }
 }
