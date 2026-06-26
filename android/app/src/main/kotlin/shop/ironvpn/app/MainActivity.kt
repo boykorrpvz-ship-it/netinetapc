@@ -8,6 +8,7 @@ import android.net.NetworkCapabilities
 import android.net.VpnService
 import android.os.Build
 import android.provider.Settings
+import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -97,10 +98,20 @@ class MainActivity : FlutterActivity() {
             )
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(intent)
-        } else {
-            startService(intent)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+        } catch (error: Throwable) {
+            // Some OEMs (notably MIUI) can refuse to launch a service whose
+            // process they have flagged as "bad" after repeated background
+            // kills, throwing SecurityException("process is bad"). Surface a
+            // clean error state instead of letting the exception cross the
+            // MethodChannel as an unhandled failure.
+            Log.e(TAG, "Failed to start VPN service", error)
+            VpnStateStore.set(this, "error")
         }
     }
 
@@ -167,6 +178,7 @@ class MainActivity : FlutterActivity() {
     }
 
     companion object {
+        private const val TAG = "MainActivity"
         private const val REQUEST_VPN_PREPARE = 4201
         private const val TRANSIENT_STATE_TTL_MS = 8_000L
     }

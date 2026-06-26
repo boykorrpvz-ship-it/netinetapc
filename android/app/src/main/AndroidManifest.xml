@@ -59,9 +59,18 @@
             </intent-filter>
         </activity>
 
+        <!--
+            Service runs in the MAIN process (no android:process=":vpn").
+            A separate :vpn process was being killed by aggressive OEM task
+            killers (MIUI/Xiaomi); after a few kills the system marked it a
+            "bad process" and refused to start it, so startForegroundService
+            threw SecurityException("process is bad") -> the app showed
+            "Ошибка запуска". Hosting the foreground VPN service in the live
+            foreground UI process avoids that throttle and lets the in-process
+            engine state checks (SingBoxBridge/AmneziaWgBridge.isRunning) work.
+        -->
         <service
             android:name=".IronVpnService"
-            android:process=":vpn"
             android:permission="android.permission.BIND_VPN_SERVICE"
             android:exported="false"
             android:foregroundServiceType="specialUse">
