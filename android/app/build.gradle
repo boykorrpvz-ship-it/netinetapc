@@ -4,6 +4,12 @@ plugins {
     id "dev.flutter.flutter-gradle-plugin"
 }
 
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file("key.properties")
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
 android {
     namespace "shop.ironvpn.app"
     compileSdk flutter.compileSdkVersion
@@ -32,15 +38,27 @@ android {
         versionName flutter.versionName
     }
 
+    signingConfigs {
+        release {
+            if (keystorePropertiesFile.exists()) {
+                keyAlias keystoreProperties["keyAlias"]
+                keyPassword keystoreProperties["keyPassword"]
+                storeFile file(keystoreProperties["storeFile"])
+                storePassword keystoreProperties["storePassword"]
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // R8 code + resource shrinking -> smaller, faster release build.
-            minifyEnabled true
-            shrinkResources true
-            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
-            // Release output is re-signed externally with the production key;
-            // debug signing here only keeps `flutter build apk --release` working.
-            signingConfig signingConfigs.debug
+            // R8 (minify/shrink) is OFF: it broke the native VPN engine's state
+            // reporting (engine started but the app stayed on "Подключение…").
+            // The real size win comes from --split-per-abi, not R8.
+            minifyEnabled false
+            shrinkResources false
+            signingConfig keystorePropertiesFile.exists()
+                    ? signingConfigs.release
+                    : signingConfigs.debug
         }
     }
 }
