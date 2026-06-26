@@ -1,12 +1,15 @@
 package shop.ironvpn.app
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.net.Uri
 import android.net.VpnService
 import android.os.Build
+import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
@@ -86,6 +89,7 @@ class MainActivity : FlutterActivity() {
         protocol: String,
         routeRussianServicesDirect: Boolean,
     ) {
+        maybeRequestBatteryExemption()
         VpnStateStore.set(this, "connecting")
         VpnStateStore.setProtocol(this, protocol)
         val intent = Intent(this, serviceClassFor(protocol)).apply {
@@ -114,6 +118,36 @@ class MainActivity : FlutterActivity() {
             Log.e(TAG, "Failed to start VPN service", error)
             VpnStateStore.set(this, "error")
         }
+    }
+
+    // Asks the system (once) to exempt the app from battery optimization so OEM
+    // power managers (notably MIUI) are less likely to kill the background VPN
+    // process. Reducing those kills is what keeps the process from being flagged
+    // a "bad process" and refused a start ("Ошибка запуска"). Note: MIUI's
+    // separate "Autostart" permission can only be granted by the user in system
+    // settings — this just covers the standard battery-optimization side.
+    @SuppressLint("BatteryLife")
+    private fun maybeRequestBatteryExemption() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            return
+        }
+        val power = getSystemService(Context.POWER_SERVICE) as PowerManager
+        if (power.isIgnoringBatteryOptimizations(packageName)) {
+            return
+        }
+        val prefs = getSharedPreferences("vpn_prefs", Context.MODE_PRIVATE)
+        if (prefs.getBoolean("battery_opt_asked", false)) {
+            return
+        }
+        prefs.edit().putBoolean("battery_opt_asked", true).apply()
+        runCatching {
+            startActivity(
+                Intent(
+                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:$packageName"),
+                ),
+            )
+        }.onFailure { Log.w(TAG, "Battery optimization request failed", it) }
     }
 
     private fun stopTunnels() {
