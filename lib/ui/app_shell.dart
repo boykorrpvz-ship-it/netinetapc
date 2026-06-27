@@ -2652,7 +2652,7 @@ class _DesktopPowerPane extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         gradient: RadialGradient(
-          center: const Alignment(0.1, -0.35),
+          center: const Alignment(0, -0.4),
           radius: 1.2,
           colors: [
             accent.withValues(alpha: 0.16),
@@ -2663,16 +2663,21 @@ class _DesktopPowerPane extends StatelessWidget {
         ),
       ),
       child: Stack(
+        alignment: Alignment.center,
         children: [
           Positioned.fill(
             child: CustomPaint(painter: _DesktopSweepPainter(accent: accent)),
           ),
           // A single centered column keeps the power button and the info block
-          // from ever overlapping, whatever the status/message length.
+          // from ever overlapping, whatever the status/message length. The Stack
+          // alignment centers the column horizontally so it lines up with the
+          // background glow (a non-positioned Stack child would otherwise pin to
+          // the top-left and look shifted against the centered background).
           Padding(
             padding: const EdgeInsets.fromLTRB(24, 28, 24, 28),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 _DesktopPowerButton(
                   product: product,
@@ -2993,14 +2998,17 @@ class _DesktopSweepPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1
       ..color = accent.withValues(alpha: 0.18);
-    final center = Offset(size.width * 0.55, size.height * 0.18);
+    // Centered horizontally, behind the power button, so the rings frame the
+    // button instead of sitting off to one side.
+    final center = Offset(size.width * 0.5, size.height * 0.30);
     canvas.drawCircle(center, 108, paint);
+    canvas.drawCircle(center, 150, paint..color = accent.withValues(alpha: 0.12));
     canvas.drawArc(
-      Rect.fromCircle(center: center, radius: 170),
+      Rect.fromCircle(center: center, radius: 190),
       -1.2,
       1.35,
       false,
-      paint..color = accent.withValues(alpha: 0.1),
+      paint..color = accent.withValues(alpha: 0.09),
     );
   }
 
