@@ -2751,16 +2751,21 @@ class _DesktopPowerPane extends StatelessWidget {
                       ),
                       const SizedBox(height: 18),
                       _DesktopConnectionMode(product: product),
-                      if (message != null) ...[
-                        const SizedBox(height: 16),
-                        _MessagePanel(product: product, message: message!),
-                      ],
                     ],
                   ),
                 ),
               ],
             ),
           ),
+          // The message sits as a bottom overlay so showing it (e.g. an error)
+          // never grows the centered column and shifts the button/info.
+          if (message != null)
+            Positioned(
+              left: 24,
+              right: 24,
+              bottom: 20,
+              child: _MessagePanel(product: product, message: message!),
+            ),
         ],
       ),
     );
@@ -4449,13 +4454,22 @@ class _SettingsPage extends StatelessWidget {
           gradient: AppGradients.backgroundFor(selected),
         ),
         child: SafeArea(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Padding(
-                // 20px left matches the cards below, so the back arrow and
-                // title line up with the left edge of the panels.
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
+          // Keep the settings content as a centered, fixed-width column so the
+          // cards don't stretch edge-to-edge on the wide desktop window.
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final width =
+                  constraints.maxWidth < 620 ? constraints.maxWidth : 620.0;
+              return Center(
+                child: SizedBox(
+                  width: width,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Padding(
+                        // Left padding lines up the back arrow and title with
+                        // the left edge of the cards below.
+                        padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
                 child: Row(
                   children: [
                     IconButton(
@@ -4528,6 +4542,10 @@ class _SettingsPage extends StatelessWidget {
                 ),
               ),
             ],
+                  ),
+                ),
+              );
+            },
           ),
         ),
       ),
