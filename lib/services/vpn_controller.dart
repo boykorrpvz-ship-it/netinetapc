@@ -18,8 +18,11 @@ enum VpnState {
 
 class VpnController {
   static const _channel = MethodChannel('shop.ironvpn/vpn');
+  static const _awgServiceName = 'netinetaAWG';
   static Process? _windowsProcess;
   static bool _windowsRunning = false;
+  // True while the AmneziaWG tunnel service (Windows) is installed/running.
+  static bool _windowsAwgActive = false;
 
   Future<String?> stableDeviceId() async {
     if (Platform.isWindows) {
@@ -51,6 +54,11 @@ class VpnController {
 
   Future<VpnState> status() async {
     if (Platform.isWindows) {
+      if (_windowsAwgActive) {
+        return await _isWindowsAwgServiceRunning()
+            ? VpnState.connected
+            : VpnState.disconnected;
+      }
       return _windowsRunning ? VpnState.connected : VpnState.disconnected;
     }
 
@@ -182,8 +190,8 @@ class VpnController {
     required StoredVpnProfile profile,
     required bool routeRussianServicesDirect,
   }) async {
-    if (profile.product != VpnProduct.vless) {
-      return VpnState.unsupported;
+    if (profile.product == VpnProduct.amneziaWg) {
+      return _startWindowsAwg(profile);
     }
 
     await _stopWindows();
@@ -251,6 +259,8 @@ class VpnController {
   }
 
   Future<VpnState> _stopWindows() async {
+    await _uninstallAwgService();
+
     final process = _windowsProcess;
     _windowsProcess = null;
     _windowsRunning = false;
@@ -272,6 +282,61 @@ class VpnController {
     }
 
     return VpnState.disconnected;
+  }
+
+  // Starts the AmneziaWG tunnel on Windows. The tunnel runs as a Windows service
+  // hosted by the bundled tunnel.dll (amneziawg-windows). The elevated UI process
+  // creates/starts the service via the executable's own "/installawg" mode.
+  Future<VpnState> _startWindowsAwg(StoredVpnProfile profile) async {
+    await _stopWindows();
+
+    try {
+      final workDir = _windowsWorkDir();
+      await workDir.create(recursive: true);
+      final confFile = File(_join(workDir.path, 'netineta-awg.conf'));
+      await confFile.writeAsString(profile.payload);
+
+      final result = await Process.run(
+        Platform.resolvedExecutable,
+        ['/installawg', confFile.path],
+      );
+      if (result.exitCode != 0) {
+        return VpnState.error;
+      }
+      _windowsAwgActive = true;
+
+      for (var attempt = 0; attempt < 40; attempt++) {
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+        if (await _isWindowsAwgServiceRunning()) {
+          return VpnState.connected;
+        }
+      }
+      return await _isWindowsAwgServiceRunning()
+          ? VpnState.connected
+          : VpnState.error;
+    } catch (_) {
+      await _uninstallAwgService();
+      return VpnState.error;
+    }
+  }
+
+  Future<bool> _isWindowsAwgServiceRunning() async {
+    try {
+      final result = await Process.run('sc', ['query', _awgServiceName]);
+      return (result.stdout as String).contains('RUNNING');
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _uninstallAwgService() async {
+    if (!_windowsAwgActive) {
+      return;
+    }
+    _windowsAwgActive = false;
+    try {
+      await Process.run(Platform.resolvedExecutable, ['/uninstallawg']);
+    } catch (_) {}
   }
 
   Future<String?> _windowsStableDeviceId() async {
