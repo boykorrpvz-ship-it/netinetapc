@@ -2,6 +2,7 @@
 
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
@@ -17,6 +18,10 @@ import '../services/ironvpn_api.dart';
 import '../services/profile_store.dart';
 import '../services/vpn_controller.dart';
 import 'theme.dart';
+
+// When true, forces the desktop main view (control + power panes) without a
+// logged-in account. Used only for visual inspection; ships as false.
+const bool _kForceMainPreview = false;
 
 ThemeData _productTheme(BuildContext context, VpnProduct product) {
   final base = Theme.of(context);
@@ -121,6 +126,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   String? _accountToken;
   String? _accountEmail;
   String? _message;
+  int? _desktopPingMs;
+  bool _desktopPinging = false;
   // Transient warning shown as a toast floating over the VPN-type selector
   // (e.g. "disconnect first before switching type"). Auto-dismisses.
   String? _typeToast;
@@ -180,8 +187,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       _state = state;
       _accountToken = accountToken;
       _accountEmail = accountEmail;
-      _connectedProduct =
-          state == VpnState.connected ? selectedProduct : null;
+      _connectedProduct = state == VpnState.connected ? selectedProduct : null;
     });
 
     await _refreshAllPending(silent: true);
@@ -258,8 +264,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       }
     } catch (_) {
       if (!silent) {
-        _showMessage(
-            'Не удалось активировать пробный доступ.');
+        _showMessage('Не удалось активировать пробный доступ.');
       }
     } finally {
       if (mounted && !silent) {
@@ -303,8 +308,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     final password = _loginPasswordController.text;
 
     if (email.isEmpty || password.length < 8) {
-      _showMessage(
-          'Введите email и пароль не короче 8 символов.');
+      _showMessage('Введите email и пароль не короче 8 символов.');
       return;
     }
 
@@ -317,8 +321,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       final snapshot = await _api.login(email: email, password: password);
       final token = snapshot.token;
       if (token == null || token.isEmpty) {
-        throw const IronVpnApiException(
-            'Сервер не вернул сессию аккаунта', 0);
+        throw const IronVpnApiException('Сервер не вернул сессию аккаунта', 0);
       }
 
       await _store.saveAccount(token: token, email: snapshot.email);
@@ -383,9 +386,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         if (mounted) {
           setState(() {
             _showLoginScreen = true;
-            _message = silent
-                ? null
-                : 'Сессия завершена. Войдите снова.';
+            _message = silent ? null : 'Сессия завершена. Войдите снова.';
           });
         }
       }
@@ -394,8 +395,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       }
     } catch (_) {
       if (!silent) {
-        _showMessage(
-            'Не удалось обновить данные аккаунта.');
+        _showMessage('Не удалось обновить данные аккаунта.');
       }
     } finally {
       if (mounted && !silent) {
@@ -420,7 +420,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       }
     }
 
-    final selectedStillActive = _subscriptions[_selectedProduct]?.isActive == true;
+    final selectedStillActive =
+        _subscriptions[_selectedProduct]?.isActive == true;
     if (!selectedStillActive && _connectedProduct == null) {
       VpnProduct? activeProduct;
       for (final product in VpnProduct.values) {
@@ -450,8 +451,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       setState(() {
         _busy = false;
         _showLoginScreen = true;
-        _message =
-            'Вы вышли из аккаунта. Локальный доступ удалён.';
+        _message = 'Вы вышли из аккаунта. Локальный доступ удалён.';
       });
     }
   }
@@ -501,8 +501,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
             Future<void> submit() async {
               final email = emailController.text.trim();
               if (email.isEmpty) {
-                setDialogState(() =>
-                    dialogError = 'Введите email аккаунта.');
+                setDialogState(() => dialogError = 'Введите email аккаунта.');
                 return;
               }
 
@@ -574,17 +573,14 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                 if (dialogContext.mounted) {
                   setDialogState(() {
                     dialogBusy = false;
-                    dialogError =
-                        'Не удалось изменить пароль.';
+                    dialogError = 'Не удалось изменить пароль.';
                   });
                 }
               }
             }
 
             return AlertDialog(
-              title: Text(codeSent
-                  ? 'Введите код'
-                  : 'Восстановление пароля'),
+              title: Text(codeSent ? 'Введите код' : 'Восстановление пароля'),
               content: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -719,8 +715,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     setState(() {
       _access[access.product] = access;
       _selectedProduct = access.product;
-      _message =
-          'Доступ привязан. Проверяю статус.';
+      _message = 'Доступ привязан. Проверяю статус.';
     });
     await _refreshSubscription(access.product);
   }
@@ -797,8 +792,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           _state = VpnState.disconnected;
           _showLoginScreen = true;
           if (!silent) {
-            _message =
-                'Войдите в аккаунт, чтобы использовать подписку.';
+            _message = 'Войдите в аккаунт, чтобы использовать подписку.';
           }
         });
         return;
@@ -837,8 +831,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         if (shouldSelectProduct) {
           _selectedProduct = product;
         }
-          if (!silent) {
-            _message = subscription.isActive
+        if (!silent) {
+          _message = subscription.isActive
               ? '${product.title}: доступ есть, конфиг настроен.'
               : subscription.isTrial
                   ? 'Пробный доступ завершён. Войдите в аккаунт.'
@@ -869,8 +863,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     final product = _selectedProduct;
     final access = _access[product];
     if (access == null) {
-      _showMessage(
-          'Нет активного конфига для обновления.');
+      _showMessage('Нет активного конфига для обновления.');
       return;
     }
     if (_state == VpnState.connected ||
@@ -902,8 +895,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     } on IronVpnApiException catch (error) {
       _showMessage(error.message);
     } catch (_) {
-      _showMessage(
-          'Не удалось обновить конфигурацию. Попробуйте позже.');
+      _showMessage('Не удалось обновить конфигурацию. Попробуйте позже.');
     } finally {
       if (mounted) {
         setState(() => _busy = false);
@@ -977,8 +969,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     final subscription = _subscriptions[_selectedProduct];
 
     if (profile == null || subscription == null || !subscription.isActive) {
-      _showMessage(
-          'Доступ закончился. Войдите в аккаунт.');
+      _showMessage('Доступ закончился. Войдите в аккаунт.');
       return;
     }
 
@@ -995,8 +986,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       setState(() {
         _busy = false;
         _state = VpnState.disconnected;
-        _message =
-            'Разрешите подключение в системном окне.';
+        _message = 'Разрешите подключение в системном окне.';
       });
       return;
     }
@@ -1012,13 +1002,11 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       _connectedProduct =
           nextState == VpnState.connected ? profile.product : null;
       if (nextState == VpnState.unsupported) {
-        _message =
-            '${profile.product.title}: движок ещё не подключён.';
+        _message = '${profile.product.title}: движок ещё не подключён.';
       } else if (nextState == VpnState.error) {
         _message = 'Ошибка запуска.';
       } else if (nextState == VpnState.disconnected) {
-        _message =
-            'Не удалось запустить. Попробуйте ещё раз.';
+        _message = 'Не удалось запустить. Попробуйте ещё раз.';
       }
     });
   }
@@ -1039,8 +1027,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     setState(() {
       _busy = false;
       _state = nextState;
-      if (nextState != VpnState.connecting &&
-          nextState != VpnState.connected) {
+      if (nextState != VpnState.connecting && nextState != VpnState.connected) {
         _connectedProduct = null;
       }
     });
@@ -1121,7 +1108,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         _routeRussianDirect = applied ? value : previousValue;
         _state = nextState;
         if (!applied || (shouldReconnect && nextState != VpnState.connected)) {
-          _message = '\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u0440\u0438\u043c\u0435\u043d\u0438\u0442\u044c \u0440\u0435\u0436\u0438\u043c. \u041f\u043e\u0434\u043a\u043b\u044e\u0447\u0438\u0442\u0435\u0441\u044c \u0435\u0449\u0435 \u0440\u0430\u0437.';
+          _message =
+              '\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u0440\u0438\u043c\u0435\u043d\u0438\u0442\u044c \u0440\u0435\u0436\u0438\u043c. \u041f\u043e\u0434\u043a\u043b\u044e\u0447\u0438\u0442\u0435\u0441\u044c \u0435\u0449\u0435 \u0440\u0430\u0437.';
         }
       });
     }
@@ -1177,6 +1165,32 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         status != 'payment_error';
   }
 
+  Future<void> _testDesktopPing() async {
+    final profile = _profiles[_selectedProduct];
+    if (profile == null || profile.product != VpnProduct.vless) {
+      _showMessage('Для теста пинга нужен активный VLESS профиль.');
+      return;
+    }
+
+    setState(() {
+      _desktopPinging = true;
+      _message = null;
+    });
+
+    final pingMs = await _vpn.testLatency(profile);
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _desktopPingMs = pingMs;
+      _desktopPinging = false;
+      if (pingMs == null) {
+        _message = 'Сервер не ответил на быстрый TCP-тест.';
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final connected = _state == VpnState.connected;
@@ -1185,6 +1199,55 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     final subscription = _subscriptions[_selectedProduct];
     final trialUsed = _subscriptions[VpnProduct.vless]?.isTrial == true;
     final initialLoading = !_initialLoadComplete;
+
+    if (Platform.isWindows) {
+      return Theme(
+        data: _productTheme(context, _selectedProduct),
+        child: _DesktopAppFrame(
+          product: _selectedProduct,
+          state: _state,
+          busy: _busy,
+          initialLoading: initialLoading,
+          showAccess: !hasAnyActive || _showLoginScreen,
+          accountEmail: _accountEmail,
+          message: _message,
+          trialUsed: trialUsed,
+          routeRussianDirect: _routeRussianDirect,
+          desktopPingMs: _desktopPingMs,
+          desktopPinging: _desktopPinging,
+          access: Map<VpnProduct, OrderAccess?>.unmodifiable(_access),
+          subscriptions:
+              Map<VpnProduct, Subscription?>.unmodifiable(_subscriptions),
+          profiles: Map<VpnProduct, StoredVpnProfile?>.unmodifiable(_profiles),
+          activeProducts: {
+            for (final item in VpnProduct.values) item: _isActive(item),
+          },
+          pendingProducts: {
+            for (final item in VpnProduct.values) item: _isPending(item),
+          },
+          emailController: _loginEmailController,
+          passwordController: _loginPasswordController,
+          onSelected: _busy ? null : _selectProduct,
+          onConnect: _connect,
+          onDisconnect: _disconnect,
+          onRefreshSelected: () => _refreshSubscription(_selectedProduct),
+          onReplaceConfig: _replaceConfig,
+          onRouteChanged: _busy ? null : _toggleRussianDirect,
+          onSettings: _openSettings,
+          onOpenLogin: _openLoginScreen,
+          onLogin: _login,
+          onForgotPassword: _showPasswordRecovery,
+          onTrial: () => _claimTrial(),
+          onOpenAccount: _openAccountSite,
+          onRefreshAccount: () => _syncAccount(),
+          onLogout: _logout,
+          onBackFromAccess: hasAnyActive
+              ? () => setState(() => _showLoginScreen = false)
+              : null,
+          onTestPing: _testDesktopPing,
+        ),
+      );
+    }
 
     return Theme(
       data: _productTheme(context, _selectedProduct),
@@ -1306,8 +1369,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                                           onPressed:
                                               _busy ? null : _openLoginScreen,
                                           icon: const Icon(Icons.login_rounded),
-                                          label: const Text(
-                                              'Войти в аккаунт'),
+                                          label: const Text('Войти в аккаунт'),
                                         ),
                                       ],
                                     ],
@@ -1362,6 +1424,1621 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       ),
     );
   }
+}
+
+class _DesktopAppFrame extends StatelessWidget {
+  const _DesktopAppFrame({
+    required this.product,
+    required this.state,
+    required this.busy,
+    required this.initialLoading,
+    required this.showAccess,
+    required this.accountEmail,
+    required this.message,
+    required this.trialUsed,
+    required this.routeRussianDirect,
+    required this.desktopPingMs,
+    required this.desktopPinging,
+    required this.access,
+    required this.subscriptions,
+    required this.profiles,
+    required this.activeProducts,
+    required this.pendingProducts,
+    required this.emailController,
+    required this.passwordController,
+    required this.onSelected,
+    required this.onConnect,
+    required this.onDisconnect,
+    required this.onRefreshSelected,
+    required this.onReplaceConfig,
+    required this.onRouteChanged,
+    required this.onSettings,
+    required this.onOpenLogin,
+    required this.onLogin,
+    required this.onForgotPassword,
+    required this.onTrial,
+    required this.onOpenAccount,
+    required this.onRefreshAccount,
+    required this.onLogout,
+    required this.onBackFromAccess,
+    required this.onTestPing,
+  });
+
+  final VpnProduct product;
+  final VpnState state;
+  final bool busy;
+  final bool initialLoading;
+  final bool showAccess;
+  final String? accountEmail;
+  final String? message;
+  final bool trialUsed;
+  final bool routeRussianDirect;
+  final int? desktopPingMs;
+  final bool desktopPinging;
+  final Map<VpnProduct, OrderAccess?> access;
+  final Map<VpnProduct, Subscription?> subscriptions;
+  final Map<VpnProduct, StoredVpnProfile?> profiles;
+  final Map<VpnProduct, bool> activeProducts;
+  final Map<VpnProduct, bool> pendingProducts;
+  final TextEditingController emailController;
+  final TextEditingController passwordController;
+  final ValueChanged<VpnProduct>? onSelected;
+  final VoidCallback onConnect;
+  final VoidCallback onDisconnect;
+  final VoidCallback onRefreshSelected;
+  final VoidCallback onReplaceConfig;
+  final ValueChanged<bool>? onRouteChanged;
+  final VoidCallback onSettings;
+  final VoidCallback onOpenLogin;
+  final VoidCallback onLogin;
+  final VoidCallback onForgotPassword;
+  final VoidCallback onTrial;
+  final VoidCallback onOpenAccount;
+  final VoidCallback onRefreshAccount;
+  final VoidCallback onLogout;
+  final VoidCallback? onBackFromAccess;
+  final VoidCallback onTestPing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF080A0D),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          const baseWidth = 980.0;
+          const baseHeight = 620.0;
+          final scale = math.min(
+            1.0,
+            math.min(
+              constraints.maxWidth / baseWidth,
+              constraints.maxHeight / baseHeight,
+            ),
+          );
+
+          return Center(
+            child: Transform.scale(
+              scale: scale,
+              child: SizedBox(
+                width: baseWidth,
+                height: baseHeight,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.zero,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: AppGradients.backgroundFor(product),
+                    ),
+                    child: Row(
+                      children: [
+                        if (showAccess && !_kForceMainPreview)
+                          Expanded(
+                            child: _DesktopAccessPanel(
+                              product: product,
+                              busy: busy,
+                              accountEmail: accountEmail,
+                              trialUsed: trialUsed,
+                              emailController: emailController,
+                              passwordController: passwordController,
+                              message: message,
+                              onLogin: onLogin,
+                              onForgotPassword: onForgotPassword,
+                              onTrial: onTrial,
+                              onOpenAccount: onOpenAccount,
+                              onRefreshAccount: onRefreshAccount,
+                              onLogout: onLogout,
+                              onBack: onBackFromAccess,
+                            ),
+                          )
+                        else ...[
+                          _DesktopControlPane(
+                            product: product,
+                            busy: busy,
+                            accountEmail: accountEmail,
+                            routeRussianDirect: routeRussianDirect,
+                            access: access,
+                            subscriptions: subscriptions,
+                            profiles: profiles,
+                            activeProducts: activeProducts,
+                            pendingProducts: pendingProducts,
+                            onSelected: onSelected,
+                            onRefreshSelected: onRefreshSelected,
+                            onReplaceConfig: onReplaceConfig,
+                            onRouteChanged: onRouteChanged,
+                            onSettings: onSettings,
+                          ),
+                          Expanded(
+                            child: _DesktopPowerPane(
+                              product: product,
+                              state: state,
+                              busy: busy,
+                              message: message,
+                              profile: profiles[product],
+                              subscription: subscriptions[product],
+                              active: activeProducts[product] == true,
+                              desktopPingMs: desktopPingMs,
+                              desktopPinging: desktopPinging,
+                              onConnect: onConnect,
+                              onDisconnect: onDisconnect,
+                              onTestPing: onTestPing,
+                              onSettings: onSettings,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _DesktopNavRail extends StatelessWidget {
+  const _DesktopNavRail({
+    required this.product,
+    required this.accountEmail,
+    required this.onSettings,
+    required this.onLogin,
+    required this.onLogout,
+  });
+
+  final VpnProduct product;
+  final String? accountEmail;
+  final VoidCallback onSettings;
+  final VoidCallback onLogin;
+  final VoidCallback onLogout;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = AppColors.accentFor(product);
+    return Container(
+      width: 62,
+      color: const Color(0xE6000000),
+      padding: const EdgeInsets.symmetric(vertical: 18),
+      child: Column(
+        children: [
+          _DesktopRailButton(
+            icon: Icons.arrow_forward_rounded,
+            selected: false,
+            accent: accent,
+            onPressed: () {},
+          ),
+          const SizedBox(height: 18),
+          _DesktopRailButton(
+            icon: Icons.add_box_outlined,
+            selected: false,
+            accent: accent,
+            onPressed: onLogin,
+          ),
+          const SizedBox(height: 14),
+          _DesktopRailButton(
+            icon: Icons.language_rounded,
+            selected: true,
+            accent: accent,
+            onPressed: onLogin,
+          ),
+          const SizedBox(height: 14),
+          _DesktopRailButton(
+            icon: Icons.settings_outlined,
+            selected: false,
+            accent: accent,
+            onPressed: onSettings,
+          ),
+          const SizedBox(height: 14),
+          _DesktopRailButton(
+            icon: Icons.monitor_heart_outlined,
+            selected: false,
+            accent: accent,
+            onPressed: onSettings,
+          ),
+          const Spacer(),
+          if (accountEmail != null)
+            _DesktopRailButton(
+              icon: Icons.logout_rounded,
+              selected: false,
+              accent: accent,
+              onPressed: onLogout,
+            )
+          else
+            _DesktopRailButton(
+              icon: Icons.login_rounded,
+              selected: false,
+              accent: accent,
+              onPressed: onLogin,
+            ),
+          const SizedBox(height: 14),
+          Icon(Icons.info_rounded, size: 18, color: AppColors.inkSoft),
+        ],
+      ),
+    );
+  }
+}
+
+class _DesktopRailButton extends StatelessWidget {
+  const _DesktopRailButton({
+    required this.icon,
+    required this.selected,
+    required this.accent,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final bool selected;
+  final Color accent;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      onPressed: onPressed,
+      style: IconButton.styleFrom(
+        fixedSize: const Size(44, 44),
+        backgroundColor:
+            selected ? accent.withValues(alpha: 0.16) : Colors.transparent,
+        foregroundColor: selected ? accent : AppColors.inkSoft,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+      icon: Icon(icon, size: 22),
+    );
+  }
+}
+
+class _DesktopAccessPanel extends StatelessWidget {
+  const _DesktopAccessPanel({
+    required this.product,
+    required this.busy,
+    required this.accountEmail,
+    required this.trialUsed,
+    required this.emailController,
+    required this.passwordController,
+    required this.message,
+    required this.onLogin,
+    required this.onForgotPassword,
+    required this.onTrial,
+    required this.onOpenAccount,
+    required this.onRefreshAccount,
+    required this.onLogout,
+    required this.onBack,
+  });
+
+  final VpnProduct product;
+  final bool busy;
+  final String? accountEmail;
+  final bool trialUsed;
+  final TextEditingController emailController;
+  final TextEditingController passwordController;
+  final String? message;
+  final VoidCallback onLogin;
+  final VoidCallback onForgotPassword;
+  final VoidCallback onTrial;
+  final VoidCallback onOpenAccount;
+  final VoidCallback onRefreshAccount;
+  final VoidCallback onLogout;
+  final VoidCallback? onBack;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(34),
+      child: Center(
+        child: SizedBox(
+          width: 520,
+          child: ListView(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            children: [
+              Text(
+                'netineta',
+                style: TextStyle(
+                  color: AppColors.ink,
+                  fontSize: 36,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Войдите в аккаунт или включите пробный доступ.',
+                style: TextStyle(color: AppColors.inkSoft, fontSize: 16),
+              ),
+              const SizedBox(height: 24),
+              _AccessGate(
+                busy: busy,
+                accountEmail: accountEmail,
+                trialUsed: trialUsed,
+                emailController: emailController,
+                passwordController: passwordController,
+                onLogin: onLogin,
+                onForgotPassword: onForgotPassword,
+                onTrial: onTrial,
+                onOpenAccount: onOpenAccount,
+                onRefreshAccount: onRefreshAccount,
+                onLogout: onLogout,
+                onBack: onBack,
+              ),
+              if (message != null) ...[
+                const SizedBox(height: 16),
+                _MessagePanel(product: product, message: message!),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DesktopControlPane extends StatelessWidget {
+  const _DesktopControlPane({
+    required this.product,
+    required this.busy,
+    required this.accountEmail,
+    required this.routeRussianDirect,
+    required this.access,
+    required this.subscriptions,
+    required this.profiles,
+    required this.activeProducts,
+    required this.pendingProducts,
+    required this.onSelected,
+    required this.onRefreshSelected,
+    required this.onReplaceConfig,
+    required this.onRouteChanged,
+    required this.onSettings,
+  });
+
+  final VpnProduct product;
+  final bool busy;
+  final String? accountEmail;
+  final bool routeRussianDirect;
+  final Map<VpnProduct, OrderAccess?> access;
+  final Map<VpnProduct, Subscription?> subscriptions;
+  final Map<VpnProduct, StoredVpnProfile?> profiles;
+  final Map<VpnProduct, bool> activeProducts;
+  final Map<VpnProduct, bool> pendingProducts;
+  final ValueChanged<VpnProduct>? onSelected;
+  final VoidCallback onRefreshSelected;
+  final VoidCallback onReplaceConfig;
+  final ValueChanged<bool>? onRouteChanged;
+  final VoidCallback onSettings;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = AppColors.accentFor(product);
+    final subscription = subscriptions[product];
+    final profile = profiles[product];
+    final active = activeProducts[product] == true;
+
+    return Container(
+      width: 410,
+      padding: const EdgeInsets.fromLTRB(28, 24, 24, 24),
+      decoration: const BoxDecoration(
+        color: Color(0xB0000000),
+        border: Border(right: BorderSide(color: Color(0x16FFFFFF))),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Image.asset(
+                'assets/app_logo_mark.png',
+                width: 42,
+                height: 42,
+                fit: BoxFit.contain,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'netineta',
+                      style: TextStyle(
+                        color: AppColors.ink,
+                        fontSize: 24,
+                        fontWeight: FontWeight.w900,
+                        height: 1,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      accountEmail ?? 'Аккаунт не подключен',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color:
+                            accountEmail == null ? AppColors.inkMuted : accent,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              _DesktopRoundIconButton(
+                icon: Icons.settings_rounded,
+                tooltip: 'Настройки',
+                onPressed: onSettings,
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+          Text(
+            'Тип VPN',
+            style: TextStyle(
+              color: AppColors.ink,
+              fontSize: 20,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: _DesktopTypeCard(
+                  product: VpnProduct.vless,
+                  selected: product == VpnProduct.vless,
+                  active: activeProducts[VpnProduct.vless] == true,
+                  pending: pendingProducts[VpnProduct.vless] == true,
+                  subscription: subscriptions[VpnProduct.vless],
+                  onTap: () => onSelected?.call(VpnProduct.vless),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _DesktopTypeCard(
+                  product: VpnProduct.amneziaWg,
+                  selected: product == VpnProduct.amneziaWg,
+                  active: activeProducts[VpnProduct.amneziaWg] == true,
+                  pending: pendingProducts[VpnProduct.amneziaWg] == true,
+                  subscription: subscriptions[VpnProduct.amneziaWg],
+                  onTap: () => onSelected?.call(VpnProduct.amneziaWg),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          _DesktopSubscriptionCard(
+            product: product,
+            active: active,
+            subscription: subscription,
+            profile: profile,
+            onRefresh: busy ? null : onRefreshSelected,
+          ),
+          const SizedBox(height: 14),
+          _DesktopRouteCard(
+            product: product,
+            value: routeRussianDirect,
+            onChanged: onRouteChanged,
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: busy ? null : onReplaceConfig,
+                  icon: const Icon(Icons.sync_rounded, size: 18),
+                  label: const Text('Обновить конфиг'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DesktopTypeCard extends StatelessWidget {
+  const _DesktopTypeCard({
+    required this.product,
+    required this.selected,
+    required this.active,
+    required this.pending,
+    required this.subscription,
+    required this.onTap,
+  });
+
+  final VpnProduct product;
+  final bool selected;
+  final bool active;
+  final bool pending;
+  final Subscription? subscription;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = AppColors.accentFor(product);
+    final status = active
+        ? 'Доступ есть'
+        : pending
+            ? 'Ожидает'
+            : 'Нет доступа';
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          height: 112,
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: selected
+                ? accent.withValues(alpha: 0.16)
+                : const Color(0x18FFFFFF),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: selected ? accent : const Color(0x20FFFFFF),
+              width: selected ? 1.5 : 1,
+            ),
+            boxShadow: selected
+                ? [
+                    BoxShadow(
+                      color: accent.withValues(alpha: 0.16),
+                      blurRadius: 22,
+                      spreadRadius: -10,
+                      offset: const Offset(0, 14),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  _DesktopProductBadge(product: product, small: true),
+                  const Spacer(),
+                  Icon(
+                    active ? Icons.check_circle_rounded : Icons.circle_outlined,
+                    size: 18,
+                    color: active ? accent : AppColors.inkMuted,
+                  ),
+                ],
+              ),
+              const Spacer(),
+              Text(
+                _desktopProductTitle(product),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: AppColors.ink,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                status,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: active ? accent : AppColors.inkMuted,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DesktopSubscriptionCard extends StatelessWidget {
+  const _DesktopSubscriptionCard({
+    required this.product,
+    required this.active,
+    required this.subscription,
+    required this.profile,
+    required this.onRefresh,
+  });
+
+  final VpnProduct product;
+  final bool active;
+  final Subscription? subscription;
+  final StoredVpnProfile? profile;
+  final VoidCallback? onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = AppColors.accentFor(product);
+    final expires = _desktopDate(subscription?.expiresAt);
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0x1FFFFFFF),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: const Color(0x20FFFFFF)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  active ? 'Доступ есть' : 'Нет доступа',
+                  style: TextStyle(
+                    color: AppColors.ink,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              _DesktopRoundIconButton(
+                icon: Icons.refresh_rounded,
+                tooltip: 'Обновить данные',
+                onPressed: onRefresh,
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Text(
+            'Действует до',
+            style: TextStyle(
+              color: AppColors.inkSoft,
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            expires.isEmpty ? '—' : expires,
+            style: TextStyle(
+              color: active ? accent : AppColors.inkMuted,
+              fontSize: 28,
+              fontWeight: FontWeight.w900,
+              height: 1,
+            ),
+          ),
+          const SizedBox(height: 12),
+          _DesktopInfoRow(
+            label: 'Профиль',
+            value: profile?.name ?? 'Не создан',
+          ),
+          const SizedBox(height: 8),
+          _DesktopInfoRow(
+            label: 'Тип',
+            value: product == VpnProduct.vless ? 'VLESS Reality' : 'AmneziaWG',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DesktopRouteCard extends StatelessWidget {
+  const _DesktopRouteCard({
+    required this.product,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final VpnProduct product;
+  final bool value;
+  final ValueChanged<bool>? onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = AppColors.accentFor(product);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+      decoration: BoxDecoration(
+        color: const Color(0x14FFFFFF),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0x1FFFFFFF)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.route_rounded, color: accent, size: 21),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'РФ-сервисы напрямую',
+                  style: TextStyle(
+                    color: AppColors.ink,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Банки, маркетплейсы и локальные сайты без VPN',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: AppColors.inkMuted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Switch(value: value, onChanged: onChanged),
+        ],
+      ),
+    );
+  }
+}
+
+class _DesktopInfoRow extends StatelessWidget {
+  const _DesktopInfoRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        SizedBox(
+          width: 70,
+          child: Text(
+            label,
+            style: TextStyle(
+              color: AppColors.inkMuted,
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: AppColors.ink,
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _DesktopRoundIconButton extends StatelessWidget {
+  const _DesktopRoundIconButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: tooltip,
+      onPressed: onPressed,
+      style: IconButton.styleFrom(
+        fixedSize: const Size(42, 42),
+        backgroundColor: const Color(0x14FFFFFF),
+        foregroundColor: AppColors.ink,
+        disabledForegroundColor: AppColors.inkMuted,
+        shape: const CircleBorder(),
+      ),
+      icon: Icon(icon, size: 21),
+    );
+  }
+}
+
+class _DesktopServerPane extends StatelessWidget {
+  const _DesktopServerPane({
+    required this.product,
+    required this.busy,
+    required this.routeRussianDirect,
+    required this.access,
+    required this.subscriptions,
+    required this.profiles,
+    required this.activeProducts,
+    required this.pendingProducts,
+    required this.onSelected,
+    required this.onRefreshSelected,
+    required this.onReplaceConfig,
+    required this.onRouteChanged,
+  });
+
+  final VpnProduct product;
+  final bool busy;
+  final bool routeRussianDirect;
+  final Map<VpnProduct, OrderAccess?> access;
+  final Map<VpnProduct, Subscription?> subscriptions;
+  final Map<VpnProduct, StoredVpnProfile?> profiles;
+  final Map<VpnProduct, bool> activeProducts;
+  final Map<VpnProduct, bool> pendingProducts;
+  final ValueChanged<VpnProduct>? onSelected;
+  final VoidCallback onRefreshSelected;
+  final VoidCallback onReplaceConfig;
+  final ValueChanged<bool>? onRouteChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 470,
+      color: const Color(0xA9000000),
+      padding: const EdgeInsets.fromLTRB(28, 24, 24, 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Серверы',
+            style: TextStyle(
+              color: AppColors.ink,
+              fontSize: 25,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 10),
+          _DesktopSearchBox(),
+          const SizedBox(height: 14),
+          Expanded(
+            child: ScrollConfiguration(
+              behavior: const _NoStretchScrollBehavior(),
+              child: ListView(
+                physics: const ClampingScrollPhysics(),
+                children: [
+                  _DesktopServerGroup(
+                    title: 'Список серверов',
+                    subtitle: 'Автовыбор лучшего маршрута',
+                    child: _DesktopServerTile(
+                      product: VpnProduct.vless,
+                      selected: product == VpnProduct.vless,
+                      active: activeProducts[VpnProduct.vless] == true,
+                      pending: pendingProducts[VpnProduct.vless] == true,
+                      profile: profiles[VpnProduct.vless],
+                      subscription: subscriptions[VpnProduct.vless],
+                      onTap: () => onSelected?.call(VpnProduct.vless),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  _DesktopServerGroup(
+                    title: 'VPN',
+                    subtitle: _desktopRenewText(subscriptions[product]),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          tooltip: 'Обновить данные',
+                          onPressed: busy ? null : onRefreshSelected,
+                          icon: const Icon(Icons.refresh_rounded, size: 19),
+                        ),
+                        IconButton(
+                          tooltip: 'Заменить конфиг',
+                          onPressed: busy ? null : onReplaceConfig,
+                          icon: const Icon(Icons.sync_rounded, size: 19),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      children: [
+                        _DesktopServerTile(
+                          product: VpnProduct.vless,
+                          selected: product == VpnProduct.vless,
+                          active: activeProducts[VpnProduct.vless] == true,
+                          pending: pendingProducts[VpnProduct.vless] == true,
+                          profile: profiles[VpnProduct.vless],
+                          subscription: subscriptions[VpnProduct.vless],
+                          onTap: () => onSelected?.call(VpnProduct.vless),
+                        ),
+                        const Divider(height: 1, color: Color(0x1FFFFFFF)),
+                        _DesktopServerTile(
+                          product: VpnProduct.amneziaWg,
+                          selected: product == VpnProduct.amneziaWg,
+                          active: activeProducts[VpnProduct.amneziaWg] == true,
+                          pending:
+                              pendingProducts[VpnProduct.amneziaWg] == true,
+                          profile: profiles[VpnProduct.amneziaWg],
+                          subscription: subscriptions[VpnProduct.amneziaWg],
+                          onTap: () => onSelected?.call(VpnProduct.amneziaWg),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  _DesktopServerGroup(
+                    title: 'Маршрутизация',
+                    subtitle: 'Озон, банки и РФ-сервисы напрямую',
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.route_rounded,
+                            color: AppColors.accentFor(product),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'РФ-сервисы напрямую',
+                              style: TextStyle(
+                                color: AppColors.ink,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                          Switch(
+                            value: routeRussianDirect,
+                            onChanged: onRouteChanged,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DesktopSearchBox extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 42,
+      child: TextField(
+        enabled: false,
+        style: TextStyle(color: AppColors.ink),
+        decoration: InputDecoration(
+          hintText: 'Введите текст для поиска',
+          hintStyle: TextStyle(color: AppColors.inkMuted),
+          suffixIcon: Icon(Icons.search_rounded, color: AppColors.inkSoft),
+          filled: true,
+          fillColor: const Color(0x1FFFFFFF),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(5),
+            borderSide: BorderSide(color: AppColors.glassBorderStrong),
+          ),
+          disabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(5),
+            borderSide: BorderSide(color: AppColors.glassBorderStrong),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DesktopServerGroup extends StatelessWidget {
+  const _DesktopServerGroup({
+    required this.title,
+    required this.subtitle,
+    required this.child,
+    this.trailing,
+  });
+
+  final String title;
+  final String subtitle;
+  final Widget child;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFF262827),
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: const Color(0x14FFFFFF)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            height: 52,
+            padding: const EdgeInsets.only(left: 13, right: 8),
+            color: const Color(0x263F3F3F),
+            child: Row(
+              children: [
+                Icon(Icons.expand_more_rounded,
+                    color: AppColors.inkMuted, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: TextStyle(
+                          color: AppColors.ink,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      if (subtitle.isNotEmpty)
+                        Text(
+                          subtitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: AppColors.inkMuted,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                trailing ??
+                    Icon(Icons.more_horiz_rounded,
+                        color: AppColors.inkSoft, size: 22),
+              ],
+            ),
+          ),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+class _DesktopServerTile extends StatelessWidget {
+  const _DesktopServerTile({
+    required this.product,
+    required this.selected,
+    required this.active,
+    required this.pending,
+    required this.profile,
+    required this.subscription,
+    required this.onTap,
+  });
+
+  final VpnProduct product;
+  final bool selected;
+  final bool active;
+  final bool pending;
+  final StoredVpnProfile? profile;
+  final Subscription? subscription;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = AppColors.accentFor(product);
+    final name = profile?.name ?? _desktopProductTitle(product);
+    final status = active
+        ? 'Доступ есть'
+        : pending
+            ? 'Ожидает активации'
+            : 'Нет доступа';
+
+    return Material(
+      color: selected ? accent.withValues(alpha: 0.14) : Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        child: Container(
+          height: 58,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: BoxDecoration(
+            border: Border(
+              left: BorderSide(
+                color: selected ? accent : Colors.transparent,
+                width: 4,
+              ),
+            ),
+          ),
+          child: Row(
+            children: [
+              _DesktopProductBadge(product: product, small: true),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: AppColors.ink,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      '${product.shortTitle} / ${product == VpnProduct.vless ? 'TCP / REALITY' : 'AWG 2.0'} · $status',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: AppColors.inkMuted,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (subscription?.expiresAt != null)
+                Text(
+                  _desktopDate(subscription!.expiresAt),
+                  style: TextStyle(
+                    color: AppColors.inkSoft,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              const SizedBox(width: 8),
+              Icon(Icons.chevron_right_rounded,
+                  color: AppColors.inkMuted, size: 20),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DesktopPowerPane extends StatelessWidget {
+  const _DesktopPowerPane({
+    required this.product,
+    required this.state,
+    required this.busy,
+    required this.message,
+    required this.profile,
+    required this.subscription,
+    required this.active,
+    required this.desktopPingMs,
+    required this.desktopPinging,
+    required this.onConnect,
+    required this.onDisconnect,
+    required this.onTestPing,
+    required this.onSettings,
+  });
+
+  final VpnProduct product;
+  final VpnState state;
+  final bool busy;
+  final String? message;
+  final StoredVpnProfile? profile;
+  final Subscription? subscription;
+  final bool active;
+  final int? desktopPingMs;
+  final bool desktopPinging;
+  final VoidCallback onConnect;
+  final VoidCallback onDisconnect;
+  final VoidCallback onTestPing;
+  final VoidCallback onSettings;
+
+  @override
+  Widget build(BuildContext context) {
+    final connected = state == VpnState.connected;
+    final accent = AppColors.accentFor(product);
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: RadialGradient(
+          center: const Alignment(0.1, -0.35),
+          radius: 1.2,
+          colors: [
+            accent.withValues(alpha: 0.16),
+            const Color(0xFF171922),
+            const Color(0xFF101218),
+          ],
+          stops: const [0, 0.46, 1],
+        ),
+      ),
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: CustomPaint(painter: _DesktopSweepPainter(accent: accent)),
+          ),
+          // A single centered column keeps the power button and the info block
+          // from ever overlapping, whatever the status/message length.
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 28, 24, 28),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                _DesktopPowerButton(
+                  product: product,
+                  state: state,
+                  busy: busy,
+                  active: active,
+                  onConnect: onConnect,
+                  onDisconnect: onDisconnect,
+                ),
+                const SizedBox(height: 30),
+                SizedBox(
+                  width: 290,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _DesktopProductBadge(product: product),
+                      const SizedBox(height: 12),
+                      Text(
+                        profile?.name ?? _desktopProductTitle(product),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: AppColors.ink,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        connected
+                            ? 'Подключено'
+                            : active
+                                ? 'Готово к подключению'
+                                : 'Нет доступа',
+                        style: TextStyle(
+                          color: connected ? accent : AppColors.inkSoft,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      if (subscription?.expiresAt != null) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          'Доступ до ${_desktopDate(subscription!.expiresAt)}',
+                          style: TextStyle(
+                            color: AppColors.inkMuted,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 16),
+                      FilledButton(
+                        onPressed: desktopPinging ? null : onTestPing,
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(210, 42),
+                          backgroundColor: accent.withValues(alpha: 0.92),
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                        ),
+                        child: Text(
+                          desktopPinging
+                              ? 'Проверяем...'
+                              : desktopPingMs == null
+                                  ? 'Тест пинга'
+                                  : 'Пинг $desktopPingMs мс',
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      _DesktopConnectionMode(product: product),
+                      if (message != null) ...[
+                        const SizedBox(height: 16),
+                        _MessagePanel(product: product, message: message!),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DesktopPowerButton extends StatelessWidget {
+  const _DesktopPowerButton({
+    required this.product,
+    required this.state,
+    required this.busy,
+    required this.active,
+    required this.onConnect,
+    required this.onDisconnect,
+  });
+
+  final VpnProduct product;
+  final VpnState state;
+  final bool busy;
+  final bool active;
+  final VoidCallback onConnect;
+  final VoidCallback onDisconnect;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = AppColors.accentFor(product);
+    final connected = state == VpnState.connected;
+    final disabled = busy || !active;
+    return GestureDetector(
+      onTap: disabled
+          ? null
+          : connected
+              ? onDisconnect
+              : onConnect,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        width: 178,
+        height: 178,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: connected
+              ? accent.withValues(alpha: 0.24)
+              : const Color(0xFF202433),
+          border: Border.all(
+            color: connected
+                ? accent.withValues(alpha: 0.9)
+                : const Color(0xFF4B536B),
+            width: 3,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: accent.withValues(alpha: connected ? 0.38 : 0.14),
+              blurRadius: connected ? 34 : 22,
+              spreadRadius: connected ? 5 : -2,
+            ),
+          ],
+        ),
+        child: Center(
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 220),
+            width: 118,
+            height: 118,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: const Color(0xFF1A1D2A),
+              border: Border.all(color: const Color(0xFF56607A), width: 2),
+            ),
+            child: Icon(
+              Icons.power_settings_new_rounded,
+              size: 56,
+              color: disabled
+                  ? AppColors.inkMuted
+                  : connected
+                      ? accent
+                      : AppColors.inkSoft,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DesktopProductBadge extends StatelessWidget {
+  const _DesktopProductBadge({required this.product, this.small = false});
+
+  final VpnProduct product;
+  final bool small;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = AppColors.accentFor(product);
+    return Container(
+      width: small ? 26 : 48,
+      height: small ? 26 : 48,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: accent.withValues(alpha: 0.16),
+        border: Border.all(color: accent.withValues(alpha: 0.42)),
+      ),
+      alignment: Alignment.center,
+      child: Icon(
+        product == VpnProduct.vless ? Icons.shield_rounded : Icons.bolt_rounded,
+        color: accent,
+        size: small ? 15 : 25,
+      ),
+    );
+  }
+}
+
+class _DesktopFlag extends StatelessWidget {
+  const _DesktopFlag({required this.product});
+
+  final VpnProduct product;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 34,
+      height: 34,
+      decoration: const BoxDecoration(
+        shape: BoxShape.circle,
+        color: Color(0xFFFFFFFF),
+      ),
+      alignment: Alignment.center,
+      child: const Text('🇷🇺', style: TextStyle(fontSize: 24)),
+    );
+  }
+}
+
+class _DesktopConnectionMode extends StatelessWidget {
+  const _DesktopConnectionMode({required this.product});
+
+  final VpnProduct product;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = AppColors.accentFor(product);
+    return Container(
+      height: 40,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(
+        color: const Color(0x99000000),
+        borderRadius: BorderRadius.circular(100),
+        border: Border.all(color: accent.withValues(alpha: 0.34)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.check_circle_rounded, color: accent, size: 18),
+          const SizedBox(width: 8),
+          Text(
+            product == VpnProduct.vless ? 'TUN · VLESS Reality' : 'AWG 2.0',
+            style: TextStyle(
+              color: AppColors.ink,
+              fontSize: 13,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DesktopTunSwitch extends StatelessWidget {
+  const _DesktopTunSwitch({required this.product});
+
+  final VpnProduct product;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = AppColors.accentFor(product);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0x99000000),
+        borderRadius: BorderRadius.circular(7),
+        border: Border.all(color: const Color(0x24FFFFFF)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(5),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _DesktopModeChip(label: 'Proxy', selected: false, accent: accent),
+            _DesktopModeChip(label: 'TUN', selected: true, accent: accent),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DesktopModeChip extends StatelessWidget {
+  const _DesktopModeChip({
+    required this.label,
+    required this.selected,
+    required this.accent,
+  });
+
+  final String label;
+  final bool selected;
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 30,
+      padding: const EdgeInsets.symmetric(horizontal: 13),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: selected ? accent : Colors.transparent,
+        borderRadius: BorderRadius.circular(5),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: selected ? Colors.white : AppColors.inkSoft,
+          fontWeight: FontWeight.w800,
+          fontSize: 13,
+        ),
+      ),
+    );
+  }
+}
+
+class _DesktopSweepPainter extends CustomPainter {
+  const _DesktopSweepPainter({required this.accent});
+
+  final Color accent;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1
+      ..color = accent.withValues(alpha: 0.18);
+    final center = Offset(size.width * 0.55, size.height * 0.18);
+    canvas.drawCircle(center, 108, paint);
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: 170),
+      -1.2,
+      1.35,
+      false,
+      paint..color = accent.withValues(alpha: 0.1),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _DesktopSweepPainter oldDelegate) {
+    return oldDelegate.accent != accent;
+  }
+}
+
+String _desktopProductTitle(VpnProduct product) {
+  return switch (product) {
+    VpnProduct.vless => 'Обычный',
+    VpnProduct.amneziaWg => 'AmneziaWG',
+  };
+}
+
+String _desktopRenewText(Subscription? subscription) {
+  if (subscription?.expiresAt == null) {
+    return 'Данные подписки обновляются вручную';
+  }
+  return 'Истекает: ${_desktopDate(subscription!.expiresAt)}';
+}
+
+String _desktopDate(String? raw) {
+  if (raw == null || raw.trim().isEmpty) {
+    return '';
+  }
+  final parsed = DateTime.tryParse(raw);
+  if (parsed != null) {
+    final day = parsed.day.toString().padLeft(2, '0');
+    final month = parsed.month.toString().padLeft(2, '0');
+    return '$day.$month.${parsed.year}';
+  }
+  final match = RegExp(r'^(\d{4})-(\d{2})-(\d{2})').firstMatch(raw);
+  if (match != null) {
+    return '${match.group(3)}.${match.group(2)}.${match.group(1)}';
+  }
+  return raw;
 }
 
 class _NoStretchScrollBehavior extends ScrollBehavior {
@@ -2076,9 +3753,7 @@ class _RoundConnectButtonState extends State<_RoundConnectButton>
                 Semantics(
                   button: true,
                   enabled: canTap,
-                  label: widget.connected
-                      ? 'Отключить'
-                      : 'Подключить',
+                  label: widget.connected ? 'Отключить' : 'Подключить',
                   child: GestureDetector(
                     onTap: canTap
                         ? (widget.connected
@@ -2544,8 +4219,7 @@ class _AccessGate extends StatelessWidget {
             FilledButton.icon(
               onPressed: busy ? null : onLogin,
               icon: Icon(Icons.login_rounded),
-              label: Text(
-                  busy ? 'Проверяем доступ...' : 'Войти'),
+              label: Text(busy ? 'Проверяем доступ...' : 'Войти'),
             ),
             const SizedBox(height: 10),
             OutlinedButton.icon(
@@ -2619,8 +4293,7 @@ class _AccountPanel extends StatelessWidget {
                       ),
                     ),
                     Text(
-                      email ??
-                          'Пробный доступ без аккаунта',
+                      email ?? 'Пробный доступ без аккаунта',
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: AppColors.inkSoft,
@@ -2652,9 +4325,7 @@ class _AccountPanel extends StatelessWidget {
             onPressed: busy ? null : onOpenAccount,
             icon: Icon(Icons.open_in_new_rounded),
             label: Text(
-              signedIn
-                  ? 'Личный кабинет'
-                  : 'Создать аккаунт',
+              signedIn ? 'Личный кабинет' : 'Создать аккаунт',
             ),
           ),
           if (signedIn) ...[
@@ -2902,9 +4573,7 @@ class _ThemePanel extends StatelessWidget {
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  darkTheme
-                      ? 'Тёмная тема'
-                      : 'Светлая тема',
+                  darkTheme ? 'Тёмная тема' : 'Светлая тема',
                   style: TextStyle(
                     color: AppColors.inkSoft,
                     fontWeight: FontWeight.w600,
