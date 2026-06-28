@@ -296,12 +296,22 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
   Future<void> _openLogsFolder() => DesktopIntegration.openLogsFolder();
 
-  Future<void> _checkForUpdate() async {
-    if (!Platform.isWindows || _updatePromptShown || !mounted) {
+  Future<void> _checkForUpdate({bool manual = false}) async {
+    if (!Platform.isWindows || !mounted) {
+      return;
+    }
+    // Auto check (on launch) only prompts once; manual check always runs.
+    if (!manual && _updatePromptShown) {
       return;
     }
     final info = await _updateService.checkForUpdate();
-    if (info == null || !mounted) {
+    if (!mounted) {
+      return;
+    }
+    if (info == null) {
+      if (manual) {
+        _showMessage('У вас последняя версия (${AppConfig.appVersion}).');
+      }
       return;
     }
     _updatePromptShown = true;
@@ -1149,6 +1159,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                   onAutoReconnectChanged: (value) =>
                       runAndRefresh(() => _setAutoReconnect(value)),
                   onOpenLogs: _openLogsFolder,
+                  onCheckUpdate: () =>
+                      runAndRefresh(() => _checkForUpdate(manual: true)),
                   onSyncAccount: () => runAndRefresh(() => _syncAccount()),
                   onOpenAccount: _openAccountSite,
                   onLogin: () {
@@ -4989,6 +5001,7 @@ class _SettingsPage extends StatelessWidget {
     required this.onKillSwitchChanged,
     required this.onAutoReconnectChanged,
     required this.onOpenLogs,
+    required this.onCheckUpdate,
     required this.onSyncAccount,
     required this.onLogin,
     required this.onOpenAccount,
@@ -5012,6 +5025,7 @@ class _SettingsPage extends StatelessWidget {
   final ValueChanged<bool> onKillSwitchChanged;
   final ValueChanged<bool> onAutoReconnectChanged;
   final VoidCallback onOpenLogs;
+  final VoidCallback onCheckUpdate;
   final VoidCallback onSyncAccount;
   final VoidCallback onLogin;
   final VoidCallback onOpenAccount;
@@ -5062,6 +5076,9 @@ class _SettingsPage extends StatelessWidget {
             onAutoReconnectChanged: onAutoReconnectChanged,
             onOpenLogs: onOpenLogs,
           )
+        : null;
+    final Widget? updateCard = Platform.isWindows
+        ? _DesktopUpdateCard(product: selected, onCheckUpdate: onCheckUpdate)
         : null;
 
     final titleRow = Padding(
@@ -5133,6 +5150,10 @@ class _SettingsPage extends StatelessWidget {
                                     accountPanel,
                                     const SizedBox(height: 14),
                                     themePanel,
+                                    if (updateCard != null) ...[
+                                      const SizedBox(height: 14),
+                                      updateCard,
+                                    ],
                                   ]),
                                 ),
                                 const SizedBox(width: 18),
@@ -5343,6 +5364,68 @@ class _DesktopOptionsPanel extends StatelessWidget {
             onTap: onOpenLogs,
           ),
         ],
+      ),
+    );
+  }
+}
+
+// Version + "check for updates" card (left column of desktop settings).
+class _DesktopUpdateCard extends StatelessWidget {
+  const _DesktopUpdateCard({required this.product, required this.onCheckUpdate});
+
+  final VpnProduct product;
+  final VoidCallback onCheckUpdate;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = AppColors.accentFor(product);
+    return _Panel(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      child: InkWell(
+        onTap: onCheckUpdate,
+        borderRadius: BorderRadius.circular(12),
+        child: Row(
+          children: [
+            Container(
+              width: 46,
+              height: 46,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: AppColors.glassStrong,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: AppColors.glassBorder),
+              ),
+              child: Icon(Icons.system_update_alt_rounded, color: accent),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Обновления',
+                    style: TextStyle(
+                      color: AppColors.ink,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    'Версия ${AppConfig.appVersion} · проверить',
+                    style: TextStyle(
+                      color: AppColors.inkSoft,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Icon(Icons.refresh_rounded, color: AppColors.inkMuted),
+          ],
+        ),
       ),
     );
   }
