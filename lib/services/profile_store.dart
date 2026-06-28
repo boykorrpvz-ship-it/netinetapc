@@ -21,6 +21,10 @@ class ProfileStore {
   static const _renewalUrlPrefix = 'ironvpn.pending_renewal_payment_url.';
   static const _accountTokenKey = 'ironvpn.account_token';
   static const _accountEmailKey = 'ironvpn.account_email';
+  static const _autostartKey = 'ironvpn.autostart';
+  static const _autoConnectKey = 'ironvpn.autoconnect';
+  static const _killSwitchKey = 'ironvpn.killswitch';
+  static const _autoReconnectKey = 'ironvpn.autoreconnect';
 
   String _profileKeyFor(VpnProduct product) =>
       '$_profileKey.${product.apiValue}';
@@ -135,6 +139,48 @@ class ProfileStore {
   Future<void> saveRouteRussianServicesDirect(bool value) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_directRuKey, value);
+  }
+
+  // --- Desktop preferences (all default off) -------------------------------
+
+  Future<bool> loadAutostart() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_autostartKey) ?? false;
+  }
+
+  Future<void> saveAutostart(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_autostartKey, value);
+  }
+
+  Future<bool> loadAutoConnect() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_autoConnectKey) ?? false;
+  }
+
+  Future<void> saveAutoConnect(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_autoConnectKey, value);
+  }
+
+  Future<bool> loadKillSwitch() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_killSwitchKey) ?? false;
+  }
+
+  Future<void> saveKillSwitch(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_killSwitchKey, value);
+  }
+
+  Future<bool> loadAutoReconnect() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_autoReconnectKey) ?? true;
+  }
+
+  Future<void> saveAutoReconnect(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_autoReconnectKey, value);
   }
 
   Future<VpnProduct> loadSelectedProduct() async {

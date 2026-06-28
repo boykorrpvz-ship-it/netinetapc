@@ -53,6 +53,27 @@ void EnableFullDpiSupportIfAvailable(HWND hwnd) {
   FreeLibrary(user32_module);
 }
 
+// DPI-aware window-frame adjust. Plain AdjustWindowRect uses 96-DPI frame
+// metrics, so on scaled displays (125%/150%) the resulting client area is a few
+// pixels off the requested size — which makes the Flutter content scale to fit
+// and resample (jagged text). AdjustWindowRectExForDpi sizes the frame for the
+// real DPI so the client area matches exactly. Falls back when unavailable.
+void AdjustWindowRectForDpi(LPRECT rect, DWORD style, UINT dpi) {
+  HMODULE user32_module = LoadLibraryA("User32.dll");
+  if (user32_module) {
+    using AdjustForDpi = BOOL(WINAPI*)(LPRECT, DWORD, BOOL, DWORD, UINT);
+    auto adjust = reinterpret_cast<AdjustForDpi>(
+        GetProcAddress(user32_module, "AdjustWindowRectExForDpi"));
+    if (adjust != nullptr) {
+      adjust(rect, style, FALSE, 0, dpi);
+      FreeLibrary(user32_module);
+      return;
+    }
+    FreeLibrary(user32_module);
+  }
+  AdjustWindowRect(rect, style, FALSE);
+}
+
 }  // namespace
 
 // Manages the Win32Window's window class registration.
@@ -143,7 +164,7 @@ bool Win32Window::Create(const std::wstring& title,
   // full outer window rect, so the Flutter content fills the window exactly.
   RECT rect = {0, 0, Scale(size.width, scale_factor),
                Scale(size.height, scale_factor)};
-  AdjustWindowRect(&rect, window_style, FALSE);
+  AdjustWindowRectForDpi(&rect, window_style, dpi);
   const int window_width = static_cast<int>(rect.right - rect.left);
   const int window_height = static_cast<int>(rect.bottom - rect.top);
 

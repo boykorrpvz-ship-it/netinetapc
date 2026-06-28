@@ -15,7 +15,10 @@ import '../models/stored_vpn_profile.dart';
 import '../models/subscription.dart';
 import '../models/vpn_product.dart';
 import '../services/ironvpn_api.dart';
+import '../services/desktop_integration.dart';
+import '../services/ip_info_service.dart';
 import '../services/profile_store.dart';
+import '../services/update_service.dart';
 import '../services/vpn_controller.dart';
 import 'theme.dart';
 
@@ -40,7 +43,7 @@ ThemeData _productTheme(BuildContext context, VpnProduct product) {
         minimumSize: const Size.fromHeight(54),
         shape: const RoundedRectangleBorder(borderRadius: AppRadii.tile),
         textStyle: const TextStyle(
-          fontWeight: FontWeight.w900,
+          fontWeight: FontWeight.w700,
           fontSize: 16,
         ),
       ),
@@ -52,7 +55,7 @@ ThemeData _productTheme(BuildContext context, VpnProduct product) {
         side: BorderSide(color: accent.withValues(alpha: 0.55), width: 1.4),
         shape: const RoundedRectangleBorder(borderRadius: AppRadii.tile),
         textStyle: const TextStyle(
-          fontWeight: FontWeight.w900,
+          fontWeight: FontWeight.w700,
           fontSize: 15,
         ),
       ),
@@ -120,6 +123,11 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   VpnProduct? _connectedProduct;
   VpnState _state = VpnState.disconnected;
   bool _routeRussianDirect = true;
+  // Desktop settings (Windows).
+  bool _autostart = false;
+  bool _autoConnect = false;
+  bool _killSwitch = false;
+  bool _autoReconnect = true;
   bool _busy = true;
   bool _initialLoadComplete = false;
   bool _showLoginScreen = false;
@@ -128,6 +136,29 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   String? _message;
   int? _desktopPingMs;
   bool _desktopPinging = false;
+  // When the current tunnel came up; drives the live session timer. Null while
+  // not connected. _sessionTicker rebuilds once a second to advance the clock.
+  DateTime? _connectedSince;
+  Timer? _sessionTicker;
+  // Live throughput + current IP (desktop telemetry).
+  Timer? _statsTimer;
+  Timer? _connMonitor;
+  final IpInfoService _ipService = IpInfoService();
+  final UpdateService _updateService = UpdateService();
+  bool _updatePromptShown = false;
+  IpInfo? _ipInfo;
+  int _downBps = 0;
+  int _upBps = 0;
+  int _sessionDown = 0;
+  int _sessionUp = 0;
+  int? _lastRx;
+  int? _lastTx;
+  int? _baseRx;
+  int? _baseTx;
+  DateTime? _lastStatsAt;
+  // True between a user-initiated connect and disconnect; lets the monitor
+  // auto-reconnect after an unexpected drop without fighting manual actions.
+  bool _userWantsConnected = false;
   // Transient warning shown as a toast floating over the VPN-type selector
   // (e.g. "disconnect first before switching type"). Auto-dismisses.
   String? _typeToast;
@@ -140,6 +171,16 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _load();
     _listenLinks();
+    if (Platform.isWindows) {
+      _refreshIpInfo();
+      // Watches for unexpected tunnel drops and reconnects when enabled.
+      _connMonitor = Timer.periodic(
+        const Duration(seconds: 8),
+        (_) => _monitorConnection(),
+      );
+      // Check GitHub Releases for a newer build shortly after launch.
+      Future<void>.delayed(const Duration(seconds: 3), _checkForUpdate);
+    }
   }
 
   @override
@@ -147,6 +188,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _accessTimer?.cancel();
     _typeToastTimer?.cancel();
+    _sessionTicker?.cancel();
+    _statsTimer?.cancel();
+    _connMonitor?.cancel();
     _linkSub?.cancel();
     _loginEmailController.dispose();
     _loginPasswordController.dispose();
@@ -168,6 +212,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   Future<void> _load() async {
     final selectedProduct = await _store.loadSelectedProduct();
     final routeRussianDirect = await _store.loadRouteRussianServicesDirect();
+    final autostart = await _store.loadAutostart();
+    final autoConnect = await _store.loadAutoConnect();
+    final killSwitch = await _store.loadKillSwitch();
+    final autoReconnect = await _store.loadAutoReconnect();
     final state = await _vpn.status();
     final accountToken = await _store.loadAccountToken();
     final accountEmail = await _store.loadAccountEmail();
@@ -184,6 +232,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     setState(() {
       _selectedProduct = selectedProduct;
       _routeRussianDirect = routeRussianDirect;
+      _autostart = autostart;
+      _autoConnect = autoConnect;
+      _killSwitch = killSwitch;
+      _autoReconnect = autoReconnect;
       _state = state;
       _accountToken = accountToken;
       _accountEmail = accountEmail;
@@ -203,6 +255,141 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       });
     }
     _startAccessMonitoring();
+    _maybeAutoConnectOnLaunch();
+  }
+
+  // Auto-connect right after launch when enabled and there's an active profile
+  // and nothing is connected yet (e.g. started via Windows logon autostart).
+  Future<void> _maybeAutoConnectOnLaunch() async {
+    if (!Platform.isWindows || !_autoConnect) {
+      return;
+    }
+    if (_state == VpnState.connected || _state == VpnState.connecting) {
+      return;
+    }
+    if (!_isActive(_selectedProduct)) {
+      return;
+    }
+    await _connect();
+  }
+
+  Future<void> _setAutostart(bool value) async {
+    setState(() => _autostart = value);
+    await _store.saveAutostart(value);
+    await DesktopIntegration.setAutostart(value);
+  }
+
+  Future<void> _setAutoConnect(bool value) async {
+    setState(() => _autoConnect = value);
+    await _store.saveAutoConnect(value);
+  }
+
+  Future<void> _setKillSwitch(bool value) async {
+    setState(() => _killSwitch = value);
+    await _store.saveKillSwitch(value);
+  }
+
+  Future<void> _setAutoReconnect(bool value) async {
+    setState(() => _autoReconnect = value);
+    await _store.saveAutoReconnect(value);
+  }
+
+  Future<void> _openLogsFolder() => DesktopIntegration.openLogsFolder();
+
+  Future<void> _checkForUpdate() async {
+    if (!Platform.isWindows || _updatePromptShown || !mounted) {
+      return;
+    }
+    final info = await _updateService.checkForUpdate();
+    if (info == null || !mounted) {
+      return;
+    }
+    _updatePromptShown = true;
+    await _showUpdateDialog(info);
+  }
+
+  Future<void> _showUpdateDialog(UpdateInfo info) async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        var downloading = false;
+        double progress = 0;
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: Text('Доступно обновление ${info.version}'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Текущая версия: ${AppConfig.appVersion}'),
+                  if (info.notes != null) ...[
+                    const SizedBox(height: 12),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 160),
+                      child: SingleChildScrollView(
+                        child: Text(info.notes!),
+                      ),
+                    ),
+                  ],
+                  if (downloading) ...[
+                    const SizedBox(height: 18),
+                    LinearProgressIndicator(
+                      value: progress > 0 ? progress : null,
+                    ),
+                    const SizedBox(height: 8),
+                    Text('Скачивание… ${(progress * 100).round()}%'),
+                  ],
+                ],
+              ),
+              actions: downloading
+                  ? const []
+                  : [
+                      TextButton(
+                        onPressed: () => Navigator.of(dialogContext).pop(),
+                        child: const Text('Позже'),
+                      ),
+                      FilledButton(
+                        onPressed: () async {
+                          setDialogState(() => downloading = true);
+                          final file =
+                              await _updateService.downloadInstaller(
+                            info.downloadUrl,
+                            onProgress: (p) {
+                              if (dialogContext.mounted) {
+                                setDialogState(() => progress = p);
+                              }
+                            },
+                          );
+                          if (file == null) {
+                            if (dialogContext.mounted) {
+                              Navigator.of(dialogContext).pop();
+                            }
+                            _showMessage('Не удалось скачать обновление.');
+                            return;
+                          }
+                          final launched =
+                              await _updateService.launchInstaller(file);
+                          if (!launched) {
+                            if (dialogContext.mounted) {
+                              Navigator.of(dialogContext).pop();
+                            }
+                            _showMessage('Не удалось запустить установщик.');
+                            return;
+                          }
+                          // Quit so the installer can replace the running app.
+                          await Future<void>.delayed(
+                              const Duration(milliseconds: 600));
+                          exit(0);
+                        },
+                        child: const Text('Обновить'),
+                      ),
+                    ],
+            );
+          },
+        );
+      },
+    );
   }
 
   void _startAccessMonitoring() {
@@ -232,6 +419,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     try {
       final installId =
           await _vpn.stableDeviceId() ?? await _store.loadOrCreateInstallId();
+      _writeDesktopDebugLog('claimTrial -> device_id=$installId');
       final platformName = Platform.isAndroid
           ? 'Android'
           : Platform.isIOS
@@ -242,6 +430,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       final subscription = await _api.claimTrial(
         installId: installId,
         deviceName: '$platformName Trial $shortId',
+      );
+      _writeDesktopDebugLog(
+        'claimTrial result active=${subscription.isActive} '
+        'isTrial=${subscription.isTrial} expires=${subscription.expiresAt}',
       );
       await _applySubscription(subscription);
 
@@ -944,6 +1136,19 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                       setSheetState(() {});
                     }
                   },
+                  autostart: _autostart,
+                  autoConnect: _autoConnect,
+                  killSwitch: _killSwitch,
+                  autoReconnect: _autoReconnect,
+                  onAutostartChanged: (value) =>
+                      runAndRefresh(() => _setAutostart(value)),
+                  onAutoConnectChanged: (value) =>
+                      runAndRefresh(() => _setAutoConnect(value)),
+                  onKillSwitchChanged: (value) =>
+                      runAndRefresh(() => _setKillSwitch(value)),
+                  onAutoReconnectChanged: (value) =>
+                      runAndRefresh(() => _setAutoReconnect(value)),
+                  onOpenLogs: _openLogsFolder,
                   onSyncAccount: () => runAndRefresh(() => _syncAccount()),
                   onOpenAccount: _openAccountSite,
                   onLogin: () {
@@ -967,12 +1172,25 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
     final profile = _profiles[_selectedProduct];
     final subscription = _subscriptions[_selectedProduct];
+    final canUseCachedWindowsProfile = Platform.isWindows &&
+        profile != null &&
+        _access[_selectedProduct] != null &&
+        (subscription == null || subscription.isActive);
+    _writeDesktopDebugLog(
+      'connect product=${_selectedProduct.apiValue} '
+      'profile=${profile != null} access=${_access[_selectedProduct] != null} '
+      'subscription=${subscription?.status}/${subscription?.isActive} '
+      'account=${_accountToken != null} cached=$canUseCachedWindowsProfile',
+    );
 
-    if (profile == null || subscription == null || !subscription.isActive) {
+    if (profile == null ||
+        (!canUseCachedWindowsProfile &&
+            (subscription == null || !subscription.isActive))) {
       _showMessage('Доступ закончился. Войдите в аккаунт.');
       return;
     }
 
+    _userWantsConnected = true;
     setState(() {
       _busy = true;
       _state = VpnState.connecting;
@@ -994,7 +1212,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     final nextState = await _vpn.start(
       profile: profile,
       routeRussianServicesDirect: _routeRussianDirect,
+      killSwitch: _killSwitch,
     );
+    _writeDesktopDebugLog('connect result=$nextState');
 
     setState(() {
       _busy = false;
@@ -1016,6 +1236,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       return;
     }
 
+    _userWantsConnected = false;
     setState(() {
       _busy = true;
       _state = VpnState.disconnecting;
@@ -1084,6 +1305,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         nextState = await _vpn.start(
           profile: profile,
           routeRussianServicesDirect: value,
+          killSwitch: _killSwitch,
         );
 
         if (nextState != VpnState.connected) {
@@ -1093,6 +1315,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           nextState = await _vpn.start(
             profile: profile,
             routeRussianServicesDirect: previousValue,
+            killSwitch: _killSwitch,
           );
         }
       }
@@ -1120,10 +1343,31 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       return;
     }
 
+    _writeDesktopDebugLog('message: $message');
     setState(() {
       _busy = false;
       _message = message;
     });
+  }
+
+  void _writeDesktopDebugLog(String message) {
+    if (!Platform.isWindows) {
+      return;
+    }
+    try {
+      final appData = Platform.environment['APPDATA'];
+      if (appData == null || appData.trim().isEmpty) {
+        return;
+      }
+      final dir = Directory('$appData\\netineta\\sing-box');
+      dir.createSync(recursive: true);
+      final now = DateTime.now().toIso8601String();
+      File('${dir.path}\\netineta-app.log').writeAsStringSync(
+        '[$now] $message\n',
+        mode: FileMode.append,
+        flush: true,
+      );
+    } catch (_) {}
   }
 
   // Shows a transient toast floating over the VPN-type selector. It clears
@@ -1149,8 +1393,16 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   }
 
   bool _isActive(VpnProduct product) {
-    return _subscriptions[product]?.isActive == true &&
-        _profiles[product] != null;
+    if (_subscriptions[product]?.isActive == true &&
+        _profiles[product] != null) {
+      return true;
+    }
+
+    // Windows can start from a cached paid profile when the site is temporarily
+    // unreachable, for example while testing PC AWG after disabling router AWG.
+    return Platform.isWindows &&
+        _profiles[product] != null &&
+        _access[product] != null;
   }
 
   bool _hasAnyActive() {
@@ -1165,10 +1417,140 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         status != 'payment_error';
   }
 
+  // Keeps the live session timer in sync with the connection state. Called once
+  // per build, so it reacts to every _state change without having to touch each
+  // assignment site. While connected, a 1s ticker rebuilds to advance the clock.
+  void _updateSessionClock() {
+    final connected = _state == VpnState.connected;
+    if (connected && _connectedSince == null) {
+      _connectedSince = DateTime.now();
+      // Reset throughput counters for the new session.
+      _lastRx = null;
+      _lastTx = null;
+      _baseRx = null;
+      _baseTx = null;
+      _lastStatsAt = null;
+      _downBps = 0;
+      _upBps = 0;
+      _sessionDown = 0;
+      _sessionUp = 0;
+      _sessionTicker ??= Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted) {
+          setState(() {});
+        }
+      });
+      _statsTimer ??=
+          Timer.periodic(const Duration(seconds: 2), (_) => _pollStats());
+      // Show the VPN exit IP once routing is up. AmneziaWG can take a moment to
+      // route/resolve, so retry until it answers.
+      Future<void>.delayed(
+        const Duration(milliseconds: 1200),
+        _refreshIpInfoWithRetry,
+      );
+    } else if (!connected && _connectedSince != null) {
+      _connectedSince = null;
+      _sessionTicker?.cancel();
+      _sessionTicker = null;
+      _statsTimer?.cancel();
+      _statsTimer = null;
+      _downBps = 0;
+      _upBps = 0;
+      // Back to the real IP.
+      _refreshIpInfo();
+    }
+  }
+
+  Future<void> _refreshIpInfo() async {
+    if (!Platform.isWindows) {
+      return;
+    }
+    final info = await _ipService.fetch();
+    if (!mounted) {
+      return;
+    }
+    setState(() => _ipInfo = info);
+  }
+
+  // Used right after a connect: the tunnel's routing/DNS may not be ready
+  // immediately (especially AmneziaWG), so retry until the lookup answers.
+  Future<void> _refreshIpInfoWithRetry() async {
+    if (!Platform.isWindows) {
+      return;
+    }
+    for (var attempt = 0; attempt < 6; attempt++) {
+      if (!mounted || _state != VpnState.connected) {
+        return;
+      }
+      final info = await _ipService.fetch();
+      if (!mounted) {
+        return;
+      }
+      if (info != null) {
+        setState(() => _ipInfo = info);
+        return;
+      }
+      await Future<void>.delayed(const Duration(seconds: 2));
+    }
+  }
+
+  Future<void> _pollStats() async {
+    final bytes = await _vpn.tunnelBytes(_connectedProduct);
+    if (!mounted || bytes == null) {
+      return;
+    }
+    final (rx, tx) = bytes;
+    final now = DateTime.now();
+    _baseRx ??= rx;
+    _baseTx ??= tx;
+    if (_lastRx != null && _lastTx != null && _lastStatsAt != null) {
+      final dt = now.difference(_lastStatsAt!).inMilliseconds / 1000.0;
+      if (dt > 0) {
+        final down = ((rx - _lastRx!) / dt).round();
+        final up = ((tx - _lastTx!) / dt).round();
+        _downBps = down < 0 ? 0 : down;
+        _upBps = up < 0 ? 0 : up;
+      }
+    }
+    _lastRx = rx;
+    _lastTx = tx;
+    _lastStatsAt = now;
+    final sd = rx - _baseRx!;
+    final su = tx - _baseTx!;
+    if (sd >= 0) _sessionDown = sd;
+    if (su >= 0) _sessionUp = su;
+    setState(() {});
+  }
+
+  // Reconnects after an unexpected tunnel drop while the user wants to stay
+  // connected and auto-reconnect is enabled.
+  Future<void> _monitorConnection() async {
+    if (!Platform.isWindows) {
+      return;
+    }
+    if (!_userWantsConnected || !_autoReconnect || _busy) {
+      return;
+    }
+    if (_state == VpnState.connecting || _state == VpnState.disconnecting) {
+      return;
+    }
+    final status = await _vpn.status();
+    if (!mounted) {
+      return;
+    }
+    if (status == VpnState.connected) {
+      if (_state != VpnState.connected) {
+        setState(() => _state = VpnState.connected);
+      }
+      return;
+    }
+    _writeDesktopDebugLog('auto-reconnect: tunnel down, reconnecting');
+    await _connect();
+  }
+
   Future<void> _testDesktopPing() async {
     final profile = _profiles[_selectedProduct];
-    if (profile == null || profile.product != VpnProduct.vless) {
-      _showMessage('Для теста пинга нужен активный VLESS профиль.');
+    if (profile == null) {
+      _showMessage('Нет профиля для теста пинга.');
       return;
     }
 
@@ -1193,6 +1575,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    _updateSessionClock();
     final connected = _state == VpnState.connected;
     final hasAnyActive = _hasAnyActive();
     final active = _isActive(_selectedProduct);
@@ -1215,6 +1598,15 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           routeRussianDirect: _routeRussianDirect,
           desktopPingMs: _desktopPingMs,
           desktopPinging: _desktopPinging,
+          connectedSince: _connectedSince,
+          telemetry: _DesktopTelemetry(
+            ip: _ipInfo,
+            connected: connected,
+            downBps: _downBps,
+            upBps: _upBps,
+            sessionDown: _sessionDown,
+            sessionUp: _sessionUp,
+          ),
           access: Map<VpnProduct, OrderAccess?>.unmodifiable(_access),
           subscriptions:
               Map<VpnProduct, Subscription?>.unmodifiable(_subscriptions),
@@ -1439,6 +1831,8 @@ class _DesktopAppFrame extends StatelessWidget {
     required this.routeRussianDirect,
     required this.desktopPingMs,
     required this.desktopPinging,
+    required this.connectedSince,
+    required this.telemetry,
     required this.access,
     required this.subscriptions,
     required this.profiles,
@@ -1475,6 +1869,8 @@ class _DesktopAppFrame extends StatelessWidget {
   final bool routeRussianDirect;
   final int? desktopPingMs;
   final bool desktopPinging;
+  final DateTime? connectedSince;
+  final _DesktopTelemetry telemetry;
   final Map<VpnProduct, OrderAccess?> access;
   final Map<VpnProduct, Subscription?> subscriptions;
   final Map<VpnProduct, StoredVpnProfile?> profiles;
@@ -1507,13 +1903,14 @@ class _DesktopAppFrame extends StatelessWidget {
         builder: (context, constraints) {
           const baseWidth = 980.0;
           const baseHeight = 620.0;
-          final scale = math.min(
-            1.0,
-            math.min(
-              constraints.maxWidth / baseWidth,
-              constraints.maxHeight / baseHeight,
-            ),
+          final rawScale = math.min(
+            constraints.maxWidth / baseWidth,
+            constraints.maxHeight / baseHeight,
           );
+          // Snap near-1.0 to exactly 1.0 so sub-pixel rounding of the client
+          // area never triggers a resample; never upscale (keeps the window at
+          // its native size).
+          final scale = rawScale >= 0.995 ? 1.0 : math.min(1.0, rawScale);
 
           return Center(
             child: Transform.scale(
@@ -1576,6 +1973,8 @@ class _DesktopAppFrame extends StatelessWidget {
                               active: activeProducts[product] == true,
                               desktopPingMs: desktopPingMs,
                               desktopPinging: desktopPinging,
+                              connectedSince: connectedSince,
+                              telemetry: telemetry,
                               onConnect: onConnect,
                               onDisconnect: onDisconnect,
                               onTestPing: onTestPing,
@@ -1741,51 +2140,67 @@ class _DesktopAccessPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(34),
-      child: Center(
-        child: SizedBox(
-          width: 520,
-          child: ListView(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            children: [
-              Text(
-                'netineta',
-                style: TextStyle(
-                  color: AppColors.ink,
-                  fontSize: 36,
-                  fontWeight: FontWeight.w900,
+    return Stack(
+      children: [
+        Padding(
+          // Reserve room at the bottom for the floating message so the card
+          // never has to scroll under it.
+          padding: EdgeInsets.fromLTRB(24, 18, 24, message != null ? 84 : 18),
+          child: Center(
+            child: SizedBox(
+              width: 500,
+              child: LayoutBuilder(
+                builder: (context, constraints) => ScrollConfiguration(
+                  behavior: const _NoStretchScrollBehavior(),
+                  child: SingleChildScrollView(
+                    physics: const ClampingScrollPhysics(),
+                    child: ConstrainedBox(
+                      constraints:
+                          BoxConstraints(minHeight: constraints.maxHeight),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Text(
+                            'netineta',
+                            style: TextStyle(
+                              color: AppColors.ink,
+                              fontSize: 30,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                          _AccessGate(
+                            busy: busy,
+                            accountEmail: accountEmail,
+                            trialUsed: trialUsed,
+                            emailController: emailController,
+                            passwordController: passwordController,
+                            onLogin: onLogin,
+                            onForgotPassword: onForgotPassword,
+                            onTrial: onTrial,
+                            onOpenAccount: onOpenAccount,
+                            onRefreshAccount: onRefreshAccount,
+                            onLogout: onLogout,
+                            onBack: onBack,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 ),
               ),
-              const SizedBox(height: 8),
-              Text(
-                'Войдите в аккаунт или включите пробный доступ.',
-                style: TextStyle(color: AppColors.inkSoft, fontSize: 16),
-              ),
-              const SizedBox(height: 24),
-              _AccessGate(
-                busy: busy,
-                accountEmail: accountEmail,
-                trialUsed: trialUsed,
-                emailController: emailController,
-                passwordController: passwordController,
-                onLogin: onLogin,
-                onForgotPassword: onForgotPassword,
-                onTrial: onTrial,
-                onOpenAccount: onOpenAccount,
-                onRefreshAccount: onRefreshAccount,
-                onLogout: onLogout,
-                onBack: onBack,
-              ),
-              if (message != null) ...[
-                const SizedBox(height: 16),
-                _MessagePanel(product: product, message: message!),
-              ],
-            ],
+            ),
           ),
         ),
-      ),
+        if (message != null)
+          Positioned(
+            left: 24,
+            right: 24,
+            bottom: 16,
+            child: _MessagePanel(product: product, message: message!),
+          ),
+      ],
     );
   }
 }
@@ -1858,7 +2273,7 @@ class _DesktopControlPane extends StatelessWidget {
                       style: TextStyle(
                         color: AppColors.ink,
                         fontSize: 24,
-                        fontWeight: FontWeight.w900,
+                        fontWeight: FontWeight.w700,
                         height: 1,
                       ),
                     ),
@@ -1871,7 +2286,7 @@ class _DesktopControlPane extends StatelessWidget {
                         color:
                             accountEmail == null ? AppColors.inkMuted : accent,
                         fontSize: 12,
-                        fontWeight: FontWeight.w800,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ],
@@ -1890,7 +2305,7 @@ class _DesktopControlPane extends StatelessWidget {
             style: TextStyle(
               color: AppColors.ink,
               fontSize: 20,
-              fontWeight: FontWeight.w900,
+              fontWeight: FontWeight.w700,
             ),
           ),
           const SizedBox(height: 12),
@@ -1926,12 +2341,6 @@ class _DesktopControlPane extends StatelessWidget {
             subscription: subscription,
             profile: profile,
             onRefresh: busy ? null : onRefreshSelected,
-          ),
-          const SizedBox(height: 14),
-          _DesktopRouteCard(
-            product: product,
-            value: routeRussianDirect,
-            onChanged: onRouteChanged,
           ),
           const SizedBox(height: 14),
           Row(
@@ -1972,7 +2381,7 @@ class _DesktopTypeCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final accent = AppColors.accentFor(product);
     final status = active
-        ? 'Доступ есть'
+        ? 'Подписка активна'
         : pending
             ? 'Ожидает'
             : 'Нет доступа';
@@ -2028,7 +2437,7 @@ class _DesktopTypeCard extends StatelessWidget {
                 style: TextStyle(
                   color: AppColors.ink,
                   fontSize: 15,
-                  fontWeight: FontWeight.w900,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
               const SizedBox(height: 4),
@@ -2039,7 +2448,7 @@ class _DesktopTypeCard extends StatelessWidget {
                 style: TextStyle(
                   color: active ? accent : AppColors.inkMuted,
                   fontSize: 12,
-                  fontWeight: FontWeight.w800,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
             ],
@@ -2084,11 +2493,11 @@ class _DesktopSubscriptionCard extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(
-                  active ? 'Доступ есть' : 'Нет доступа',
+                  active ? 'Подписка активна' : 'Нет доступа',
                   style: TextStyle(
                     color: AppColors.ink,
                     fontSize: 22,
-                    fontWeight: FontWeight.w900,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
               ),
@@ -2105,7 +2514,7 @@ class _DesktopSubscriptionCard extends StatelessWidget {
             style: TextStyle(
               color: AppColors.inkSoft,
               fontSize: 12,
-              fontWeight: FontWeight.w800,
+              fontWeight: FontWeight.w600,
             ),
           ),
           const SizedBox(height: 5),
@@ -2114,19 +2523,42 @@ class _DesktopSubscriptionCard extends StatelessWidget {
             style: TextStyle(
               color: active ? accent : AppColors.inkMuted,
               fontSize: 28,
-              fontWeight: FontWeight.w900,
+              fontWeight: FontWeight.w700,
               height: 1,
             ),
           ),
-          const SizedBox(height: 12),
-          _DesktopInfoRow(
-            label: 'Профиль',
-            value: profile?.name ?? 'Не создан',
-          ),
-          const SizedBox(height: 8),
-          _DesktopInfoRow(
-            label: 'Тип',
-            value: product == VpnProduct.vless ? 'VLESS Reality' : 'AmneziaWG',
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: const Color(0x0AFFFFFF),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0x14FFFFFF)),
+            ),
+            child: Column(
+              children: [
+                _DesktopInfoRow(
+                  icon: Icons.badge_rounded,
+                  accent: accent,
+                  label: 'Профиль',
+                  value: profile?.name ?? 'Не создан',
+                ),
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 9),
+                  child: Divider(height: 1, thickness: 1, color: Color(0x12FFFFFF)),
+                ),
+                _DesktopInfoRow(
+                  icon: product == VpnProduct.vless
+                      ? Icons.shield_rounded
+                      : Icons.bolt_rounded,
+                  accent: accent,
+                  label: 'Тип',
+                  value: product == VpnProduct.vless
+                      ? 'VLESS Reality'
+                      : 'AmneziaWG',
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -2168,7 +2600,7 @@ class _DesktopRouteCard extends StatelessWidget {
                   style: TextStyle(
                     color: AppColors.ink,
                     fontSize: 14,
-                    fontWeight: FontWeight.w900,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
                 const SizedBox(height: 2),
@@ -2179,7 +2611,7 @@ class _DesktopRouteCard extends StatelessWidget {
                   style: TextStyle(
                     color: AppColors.inkMuted,
                     fontSize: 11,
-                    fontWeight: FontWeight.w700,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
               ],
@@ -2193,8 +2625,15 @@ class _DesktopRouteCard extends StatelessWidget {
 }
 
 class _DesktopInfoRow extends StatelessWidget {
-  const _DesktopInfoRow({required this.label, required this.value});
+  const _DesktopInfoRow({
+    required this.icon,
+    required this.accent,
+    required this.label,
+    required this.value,
+  });
 
+  final IconData icon;
+  final Color accent;
   final String label;
   final String value;
 
@@ -2202,27 +2641,43 @@ class _DesktopInfoRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        SizedBox(
-          width: 70,
-          child: Text(
-            label,
-            style: TextStyle(
-              color: AppColors.inkMuted,
-              fontSize: 12,
-              fontWeight: FontWeight.w800,
-            ),
+        Container(
+          width: 34,
+          height: 34,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: accent.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: accent.withValues(alpha: 0.22)),
           ),
+          child: Icon(icon, size: 17, color: accent),
         ),
+        const SizedBox(width: 11),
         Expanded(
-          child: Text(
-            value,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: AppColors.ink,
-              fontSize: 13,
-              fontWeight: FontWeight.w800,
-            ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  color: AppColors.inkMuted,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.2,
+                ),
+              ),
+              const SizedBox(height: 1),
+              Text(
+                value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: AppColors.ink,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
           ),
         ),
       ],
@@ -2301,7 +2756,7 @@ class _DesktopServerPane extends StatelessWidget {
             style: TextStyle(
               color: AppColors.ink,
               fontSize: 25,
-              fontWeight: FontWeight.w900,
+              fontWeight: FontWeight.w700,
             ),
           ),
           const SizedBox(height: 10),
@@ -2391,7 +2846,7 @@ class _DesktopServerPane extends StatelessWidget {
                               'РФ-сервисы напрямую',
                               style: TextStyle(
                                 color: AppColors.ink,
-                                fontWeight: FontWeight.w800,
+                                fontWeight: FontWeight.w600,
                               ),
                             ),
                           ),
@@ -2486,7 +2941,7 @@ class _DesktopServerGroup extends StatelessWidget {
                         style: TextStyle(
                           color: AppColors.ink,
                           fontSize: 15,
-                          fontWeight: FontWeight.w900,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
                       if (subtitle.isNotEmpty)
@@ -2497,7 +2952,7 @@ class _DesktopServerGroup extends StatelessWidget {
                           style: TextStyle(
                             color: AppColors.inkMuted,
                             fontSize: 10,
-                            fontWeight: FontWeight.w700,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
                     ],
@@ -2540,7 +2995,7 @@ class _DesktopServerTile extends StatelessWidget {
     final accent = AppColors.accentFor(product);
     final name = profile?.name ?? _desktopProductTitle(product);
     final status = active
-        ? 'Доступ есть'
+        ? 'Подписка активна'
         : pending
             ? 'Ожидает активации'
             : 'Нет доступа';
@@ -2576,7 +3031,7 @@ class _DesktopServerTile extends StatelessWidget {
                       style: TextStyle(
                         color: AppColors.ink,
                         fontSize: 14,
-                        fontWeight: FontWeight.w800,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                     const SizedBox(height: 3),
@@ -2587,7 +3042,7 @@ class _DesktopServerTile extends StatelessWidget {
                       style: TextStyle(
                         color: AppColors.inkMuted,
                         fontSize: 10,
-                        fontWeight: FontWeight.w700,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ],
@@ -2599,7 +3054,7 @@ class _DesktopServerTile extends StatelessWidget {
                   style: TextStyle(
                     color: AppColors.inkSoft,
                     fontSize: 11,
-                    fontWeight: FontWeight.w700,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
               const SizedBox(width: 8),
@@ -2624,6 +3079,8 @@ class _DesktopPowerPane extends StatelessWidget {
     required this.active,
     required this.desktopPingMs,
     required this.desktopPinging,
+    this.connectedSince,
+    this.telemetry = const _DesktopTelemetry(),
     required this.onConnect,
     required this.onDisconnect,
     required this.onTestPing,
@@ -2639,6 +3096,8 @@ class _DesktopPowerPane extends StatelessWidget {
   final bool active;
   final int? desktopPingMs;
   final bool desktopPinging;
+  final DateTime? connectedSince;
+  final _DesktopTelemetry telemetry;
   final VoidCallback onConnect;
   final VoidCallback onDisconnect;
   final VoidCallback onTestPing;
@@ -2665,36 +3124,53 @@ class _DesktopPowerPane extends StatelessWidget {
       child: Stack(
         alignment: Alignment.center,
         children: [
-          Positioned.fill(
-            child: CustomPaint(painter: _DesktopSweepPainter(accent: accent)),
-          ),
-          // A single centered column keeps the power button and the info block
-          // from ever overlapping, whatever the status/message length. The Stack
-          // alignment centers the column horizontally so it lines up with the
-          // background glow (a non-positioned Stack child would otherwise pin to
-          // the top-left and look shifted against the centered background).
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 28, 24, 28),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                _DesktopPowerButton(
-                  product: product,
-                  state: state,
-                  busy: busy,
-                  active: active,
-                  onConnect: onConnect,
-                  onDisconnect: onDisconnect,
+          // Rings and the animated power button live in one fixed, centered
+          // field, so the button is always dead-centre of the rings regardless
+          // of how tall the info block below grows.
+          LayoutBuilder(
+            builder: (context, constraints) => ScrollConfiguration(
+              behavior: const _NoStretchScrollBehavior(),
+              child: SingleChildScrollView(
+                child: ConstrainedBox(
+                  constraints:
+                      BoxConstraints(minHeight: constraints.maxHeight),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 24, 24, 28),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                SizedBox(
+                  width: 260,
+                  height: 260,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      Positioned.fill(
+                        child: CustomPaint(
+                          painter: _DesktopSweepPainter(accent: accent),
+                        ),
+                      ),
+                      _RoundConnectButton(
+                        busy: busy,
+                        enabled: active,
+                        connected: connected,
+                        connecting: state == VpnState.connecting,
+                        product: product,
+                        compact: true,
+                        showLabel: false,
+                        onConnect: onConnect,
+                        onDisconnect: onDisconnect,
+                      ),
+                    ],
+                  ),
                 ),
-                const SizedBox(height: 30),
+                const SizedBox(height: 6),
                 SizedBox(
                   width: 290,
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      _DesktopProductBadge(product: product),
-                      const SizedBox(height: 12),
                       Text(
                         profile?.name ?? _desktopProductTitle(product),
                         maxLines: 1,
@@ -2703,7 +3179,7 @@ class _DesktopPowerPane extends StatelessWidget {
                         style: TextStyle(
                           color: AppColors.ink,
                           fontSize: 15,
-                          fontWeight: FontWeight.w800,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                       const SizedBox(height: 8),
@@ -2716,7 +3192,118 @@ class _DesktopPowerPane extends StatelessWidget {
                         style: TextStyle(
                           color: connected ? accent : AppColors.inkSoft,
                           fontSize: 12,
-                          fontWeight: FontWeight.w800,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      // Fixed-height telemetry strip: reserves constant space so
+                      // the layout — and the power button above — never shifts
+                      // when these lines appear/disappear on connect/disconnect.
+                      SizedBox(
+                        height: 90,
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            if (connected && connectedSince != null)
+                              Text(
+                                _formatSessionDuration(
+                                  DateTime.now().difference(connectedSince!),
+                                ),
+                                style: TextStyle(
+                                  color: accent,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 1,
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures(),
+                                  ],
+                                ),
+                              ),
+                            if (telemetry.ip != null)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 6),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      connected
+                                          ? Icons.lock_rounded
+                                          : Icons.lock_open_rounded,
+                                      size: 13,
+                                      color: connected
+                                          ? accent
+                                          : AppColors.inkMuted,
+                                    ),
+                                    const SizedBox(width: 5),
+                                    Flexible(
+                                      child: Text(
+                                        telemetry.ip!.label,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: connected
+                                              ? AppColors.inkSoft
+                                              : AppColors.inkMuted,
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            if (connected)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 8),
+                                child: Column(
+                                  children: [
+                                    Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        Icon(Icons.south_rounded,
+                                            size: 13, color: accent),
+                                        const SizedBox(width: 3),
+                                        Text(
+                                          _formatSpeed(telemetry.downBps),
+                                          style: TextStyle(
+                                            color: AppColors.ink,
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w600,
+                                            fontFeatures: const [
+                                              FontFeature.tabularFigures(),
+                                            ],
+                                          ),
+                                        ),
+                                        const SizedBox(width: 14),
+                                        Icon(Icons.north_rounded,
+                                            size: 13, color: accent),
+                                        const SizedBox(width: 3),
+                                        Text(
+                                          _formatSpeed(telemetry.upBps),
+                                          style: TextStyle(
+                                            color: AppColors.ink,
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w600,
+                                            fontFeatures: const [
+                                              FontFeature.tabularFigures(),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      'За сессию  ↓ ${_formatBytes(telemetry.sessionDown)}  ↑ ${_formatBytes(telemetry.sessionUp)}',
+                                      style: TextStyle(
+                                        color: AppColors.inkMuted,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                          ],
                         ),
                       ),
                       if (subscription?.expiresAt != null) ...[
@@ -2726,7 +3313,7 @@ class _DesktopPowerPane extends StatelessWidget {
                           style: TextStyle(
                             color: AppColors.inkMuted,
                             fontSize: 11,
-                            fontWeight: FontWeight.w700,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
                       ],
@@ -2755,6 +3342,10 @@ class _DesktopPowerPane extends StatelessWidget {
                   ),
                 ),
               ],
+                    ),
+                  ),
+                ),
+              ),
             ),
           ),
           // The message sits as a bottom overlay so showing it (e.g. an error)
@@ -2767,83 +3358,6 @@ class _DesktopPowerPane extends StatelessWidget {
               child: _MessagePanel(product: product, message: message!),
             ),
         ],
-      ),
-    );
-  }
-}
-
-class _DesktopPowerButton extends StatelessWidget {
-  const _DesktopPowerButton({
-    required this.product,
-    required this.state,
-    required this.busy,
-    required this.active,
-    required this.onConnect,
-    required this.onDisconnect,
-  });
-
-  final VpnProduct product;
-  final VpnState state;
-  final bool busy;
-  final bool active;
-  final VoidCallback onConnect;
-  final VoidCallback onDisconnect;
-
-  @override
-  Widget build(BuildContext context) {
-    final accent = AppColors.accentFor(product);
-    final connected = state == VpnState.connected;
-    final disabled = busy || !active;
-    return GestureDetector(
-      onTap: disabled
-          ? null
-          : connected
-              ? onDisconnect
-              : onConnect,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 220),
-        width: 178,
-        height: 178,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: connected
-              ? accent.withValues(alpha: 0.24)
-              : const Color(0xFF202433),
-          border: Border.all(
-            color: connected
-                ? accent.withValues(alpha: 0.9)
-                : const Color(0xFF4B536B),
-            width: 3,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: accent.withValues(alpha: connected ? 0.38 : 0.14),
-              blurRadius: connected ? 34 : 22,
-              spreadRadius: connected ? 5 : -2,
-            ),
-          ],
-        ),
-        child: Center(
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 220),
-            width: 118,
-            height: 118,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: const Color(0xFF1A1D2A),
-              border: Border.all(color: const Color(0xFF56607A), width: 2),
-            ),
-            child: Icon(
-              Icons.power_settings_new_rounded,
-              size: 56,
-              color: disabled
-                  ? AppColors.inkMuted
-                  : connected
-                      ? accent
-                      : AppColors.inkSoft,
-            ),
-          ),
-        ),
       ),
     );
   }
@@ -2922,7 +3436,7 @@ class _DesktopConnectionMode extends StatelessWidget {
             style: TextStyle(
               color: AppColors.ink,
               fontSize: 13,
-              fontWeight: FontWeight.w900,
+              fontWeight: FontWeight.w700,
             ),
           ),
         ],
@@ -2984,7 +3498,7 @@ class _DesktopModeChip extends StatelessWidget {
         label,
         style: TextStyle(
           color: selected ? Colors.white : AppColors.inkSoft,
-          fontWeight: FontWeight.w800,
+          fontWeight: FontWeight.w600,
           fontSize: 13,
         ),
       ),
@@ -3001,20 +3515,17 @@ class _DesktopSweepPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1
-      ..color = accent.withValues(alpha: 0.18);
-    // Centered horizontally, behind the power button, so the rings frame the
-    // button instead of sitting off to one side.
-    final center = Offset(size.width * 0.5, size.height * 0.30);
-    canvas.drawCircle(center, 108, paint);
-    canvas.drawCircle(center, 150, paint..color = accent.withValues(alpha: 0.12));
-    canvas.drawArc(
-      Rect.fromCircle(center: center, radius: 190),
-      -1.2,
-      1.35,
-      false,
-      paint..color = accent.withValues(alpha: 0.09),
-    );
+      ..strokeWidth = 1.2;
+    // Full, evenly-spaced concentric circles centered in the field that also
+    // holds the power button — symmetric, so nothing looks off to one side.
+    final center = size.center(Offset.zero);
+    final base = size.shortestSide;
+    canvas.drawCircle(
+        center, base * 0.34, paint..color = accent.withValues(alpha: 0.22));
+    canvas.drawCircle(
+        center, base * 0.42, paint..color = accent.withValues(alpha: 0.14));
+    canvas.drawCircle(
+        center, base * 0.49, paint..color = accent.withValues(alpha: 0.08));
   }
 
   @override
@@ -3028,6 +3539,56 @@ String _desktopProductTitle(VpnProduct product) {
     VpnProduct.vless => 'Обычный',
     VpnProduct.amneziaWg => 'AmneziaWG',
   };
+}
+
+// Live session length as H:MM:SS (or MM:SS under an hour).
+String _formatSessionDuration(Duration d) {
+  if (d.isNegative) {
+    d = Duration.zero;
+  }
+  final hours = d.inHours;
+  final minutes = d.inMinutes % 60;
+  final seconds = d.inSeconds % 60;
+  final mm = minutes.toString().padLeft(2, '0');
+  final ss = seconds.toString().padLeft(2, '0');
+  return hours > 0 ? '$hours:$mm:$ss' : '$mm:$ss';
+}
+
+String _formatBytes(int bytes) {
+  if (bytes < 1024) {
+    return '$bytes Б';
+  }
+  final kb = bytes / 1024;
+  if (kb < 1024) {
+    return '${kb.toStringAsFixed(kb < 10 ? 1 : 0)} КБ';
+  }
+  final mb = kb / 1024;
+  if (mb < 1024) {
+    return '${mb.toStringAsFixed(mb < 10 ? 1 : 0)} МБ';
+  }
+  final gb = mb / 1024;
+  return '${gb.toStringAsFixed(gb < 10 ? 2 : 1)} ГБ';
+}
+
+String _formatSpeed(int bytesPerSec) => '${_formatBytes(bytesPerSec)}/с';
+
+// Live connection telemetry shown on the desktop power pane.
+class _DesktopTelemetry {
+  const _DesktopTelemetry({
+    this.ip,
+    this.connected = false,
+    this.downBps = 0,
+    this.upBps = 0,
+    this.sessionDown = 0,
+    this.sessionUp = 0,
+  });
+
+  final IpInfo? ip;
+  final bool connected;
+  final int downBps;
+  final int upBps;
+  final int sessionDown;
+  final int sessionUp;
 }
 
 String _desktopRenewText(Subscription? subscription) {
@@ -3179,7 +3740,7 @@ class _Header extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 24,
                   height: 1,
-                  fontWeight: FontWeight.w900,
+                  fontWeight: FontWeight.w700,
                   letterSpacing: -0.5,
                   color: AppColors.ink,
                 ),
@@ -3189,7 +3750,7 @@ class _Header extends StatelessWidget {
                 'Стабильное соединение',
                 style: TextStyle(
                   fontSize: 13,
-                  fontWeight: FontWeight.w700,
+                  fontWeight: FontWeight.w600,
                   color: accent,
                 ),
               ),
@@ -3239,7 +3800,7 @@ class _ProductSwitcher extends StatelessWidget {
           title,
           style: TextStyle(
             fontSize: 24,
-            fontWeight: FontWeight.w900,
+            fontWeight: FontWeight.w700,
             letterSpacing: -0.5,
             color: AppColors.ink,
           ),
@@ -3360,7 +3921,7 @@ class _ProductCard extends StatelessWidget {
                             product.title,
                             style: TextStyle(
                               fontSize: 18,
-                              fontWeight: FontWeight.w900,
+                              fontWeight: FontWeight.w700,
                               letterSpacing: -0.3,
                               color: AppColors.ink,
                             ),
@@ -3401,7 +3962,7 @@ class _ProductCard extends StatelessWidget {
                                 style: TextStyle(
                                   color: AppColors.inkMuted,
                                   fontSize: 12,
-                                  fontWeight: FontWeight.w700,
+                                  fontWeight: FontWeight.w600,
                                 ),
                               ),
                               const SizedBox(height: 2),
@@ -3414,7 +3975,7 @@ class _ProductCard extends StatelessWidget {
                                 style: TextStyle(
                                   color: active ? accent : AppColors.inkSoft,
                                   fontSize: active ? 18 : 14,
-                                  fontWeight: FontWeight.w900,
+                                  fontWeight: FontWeight.w700,
                                 ),
                               ),
                             ],
@@ -3548,7 +4109,7 @@ class _ModeSegmentButton extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontSize: compact ? 13 : 14,
-                  fontWeight: FontWeight.w900,
+                  fontWeight: FontWeight.w700,
                   color: selected ? accent : AppColors.ink,
                 ),
               ),
@@ -3559,7 +4120,7 @@ class _ModeSegmentButton extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontSize: 11,
-                  fontWeight: FontWeight.w800,
+                  fontWeight: FontWeight.w600,
                   color: AppColors.inkMuted,
                 ),
               ),
@@ -3642,6 +4203,7 @@ class _RoundConnectButton extends StatefulWidget {
     required this.connecting,
     required this.product,
     required this.compact,
+    this.showLabel = true,
     required this.onConnect,
     required this.onDisconnect,
   });
@@ -3652,6 +4214,9 @@ class _RoundConnectButton extends StatefulWidget {
   final bool connecting;
   final VpnProduct product;
   final bool compact;
+  // When false, only the animated orb is rendered (no state caption beneath).
+  // The desktop pane shows its own status text, so it hides this one.
+  final bool showLabel;
   final VoidCallback onConnect;
   final VoidCallback onDisconnect;
 
@@ -3722,6 +4287,7 @@ class _RoundConnectButtonState extends State<_RoundConnectButton>
                 : 'Недоступно';
 
     return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
         RepaintBoundary(
           child: SizedBox(
@@ -3843,20 +4409,22 @@ class _RoundConnectButtonState extends State<_RoundConnectButton>
             ),
           ),
         ),
-        SizedBox(height: widget.compact ? 6 : 10),
-        AnimatedSwitcher(
-          duration: const Duration(milliseconds: 220),
-          child: Text(
-            stateLabel,
-            key: ValueKey(stateLabel),
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: widget.enabled ? AppColors.ink : AppColors.inkSoft,
-              fontSize: widget.compact ? 16 : 17,
-              fontWeight: FontWeight.w900,
+        if (widget.showLabel) ...[
+          SizedBox(height: widget.compact ? 6 : 10),
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 220),
+            child: Text(
+              stateLabel,
+              key: ValueKey(stateLabel),
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: widget.enabled ? AppColors.ink : AppColors.inkSoft,
+                fontSize: widget.compact ? 16 : 17,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
-        ),
+        ],
       ],
     );
   }
@@ -3918,7 +4486,7 @@ class _SubscriptionPanel extends StatelessWidget {
                   style: TextStyle(
                     fontSize: compact ? 21 : 24,
                     height: 1.05,
-                    fontWeight: FontWeight.w900,
+                    fontWeight: FontWeight.w700,
                     letterSpacing: -0.4,
                     color: AppColors.ink,
                   ),
@@ -3936,7 +4504,7 @@ class _SubscriptionPanel extends StatelessWidget {
             'Действует до',
             style: TextStyle(
               color: AppColors.inkSoft,
-              fontWeight: FontWeight.w800,
+              fontWeight: FontWeight.w600,
             ),
           ),
           SizedBox(height: compact ? 2 : 4),
@@ -3944,7 +4512,7 @@ class _SubscriptionPanel extends StatelessWidget {
             expires,
             style: TextStyle(
               fontSize: compact ? 26 : 30,
-              fontWeight: FontWeight.w900,
+              fontWeight: FontWeight.w700,
               letterSpacing: -0.5,
               color: accent,
             ),
@@ -4010,7 +4578,7 @@ class _RoutePanel extends StatelessWidget {
         activeTrackColor: accent,
         title: Text(
           'РФ-сервисы напрямую',
-          style: TextStyle(fontWeight: FontWeight.w900),
+          style: TextStyle(fontWeight: FontWeight.w700),
         ),
         subtitle: Text(
           'Ozon, Wildberries, Avito, Госуслуги, Сбер, Яндекс, VK',
@@ -4055,7 +4623,7 @@ class _PendingPaymentPanel extends StatelessWidget {
                   '${product.title}: запрос создан',
                   style: TextStyle(
                     fontSize: 21,
-                    fontWeight: FontWeight.w900,
+                    fontWeight: FontWeight.w700,
                     letterSpacing: -0.3,
                     color: AppColors.ink,
                   ),
@@ -4124,7 +4692,7 @@ class _AccessGate extends StatelessWidget {
     final signedIn = accountEmail != null;
 
     return _Panel(
-      padding: const EdgeInsets.all(22),
+      padding: const EdgeInsets.all(18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -4137,45 +4705,31 @@ class _AccessGate extends StatelessWidget {
                 label: Text('Вернуться'),
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 4),
           ],
-          Container(
-            width: 56,
-            height: 56,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: AppColors.green.withValues(alpha: 0.12),
-              borderRadius: AppRadii.tile,
-            ),
-            child: Icon(
-              signedIn ? Icons.cloud_sync_rounded : Icons.lock_clock_rounded,
-              color: AppColors.greenDeep,
-              size: 30,
-            ),
-          ),
-          const SizedBox(height: 18),
           Text(
             signedIn ? 'Нет доступа' : 'Вход в аккаунт',
             style: TextStyle(
-              fontSize: 28,
+              fontSize: 23,
               height: 1.05,
-              fontWeight: FontWeight.w900,
+              fontWeight: FontWeight.w700,
               letterSpacing: -0.5,
               color: AppColors.ink,
             ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 6),
           Text(
             signedIn
                 ? 'Вы вошли как $accountEmail. Обновите данные или откройте личный кабинет.'
-                : 'Войдите, чтобы приложение автоматически загрузило ваши подписки и настроило подключение.',
+                : 'Войдите, чтобы приложение загрузило подписки и настроило подключение.',
             style: TextStyle(
               color: AppColors.inkSoft,
-              height: 1.4,
+              height: 1.3,
+              fontSize: 13,
               fontWeight: FontWeight.w600,
             ),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 14),
           if (signedIn) ...[
             FilledButton.icon(
               onPressed: busy ? null : onRefreshAccount,
@@ -4236,19 +4790,21 @@ class _AccessGate extends StatelessWidget {
             ),
             const SizedBox(height: 10),
             OutlinedButton.icon(
-              onPressed: busy || trialUsed ? null : onTrial,
+              onPressed: busy ? null : onOpenAccount,
+              icon: Icon(Icons.open_in_new_rounded),
+              label: Text('Зарегистрироваться'),
+            ),
+            const SizedBox(height: 10),
+            OutlinedButton.icon(
+              // Always ask the server (never gate purely on local state) so a
+              // backend trial reset takes effect without clearing app data.
+              onPressed: busy ? null : onTrial,
               icon: Icon(Icons.timer_outlined),
               label: Text(
                 trialUsed
-                    ? 'Пробный доступ использован'
+                    ? 'Проверить пробный доступ'
                     : 'Пробный доступ на 24 часа',
               ),
-            ),
-            const SizedBox(height: 4),
-            TextButton.icon(
-              onPressed: busy ? null : onOpenAccount,
-              icon: Icon(Icons.person_add_alt_1_rounded),
-              label: Text('Создать аккаунт'),
             ),
           ],
         ],
@@ -4301,7 +4857,7 @@ class _AccountPanel extends StatelessWidget {
                     Text(
                       'Аккаунт',
                       style: TextStyle(
-                        fontWeight: FontWeight.w900,
+                        fontWeight: FontWeight.w700,
                         color: AppColors.ink,
                       ),
                     ),
@@ -4379,7 +4935,7 @@ class _AccountPurchasePanel extends StatelessWidget {
             '${product.title}: нет доступа',
             style: TextStyle(
               fontSize: 22,
-              fontWeight: FontWeight.w900,
+              fontWeight: FontWeight.w700,
               color: AppColors.ink,
             ),
           ),
@@ -4424,6 +4980,15 @@ class _SettingsPage extends StatelessWidget {
     required this.darkTheme,
     required this.onDarkThemeChanged,
     required this.onRouteChanged,
+    required this.autostart,
+    required this.autoConnect,
+    required this.killSwitch,
+    required this.autoReconnect,
+    required this.onAutostartChanged,
+    required this.onAutoConnectChanged,
+    required this.onKillSwitchChanged,
+    required this.onAutoReconnectChanged,
+    required this.onOpenLogs,
     required this.onSyncAccount,
     required this.onLogin,
     required this.onOpenAccount,
@@ -4438,6 +5003,15 @@ class _SettingsPage extends StatelessWidget {
   final bool darkTheme;
   final ValueChanged<bool> onDarkThemeChanged;
   final ValueChanged<bool> onRouteChanged;
+  final bool autostart;
+  final bool autoConnect;
+  final bool killSwitch;
+  final bool autoReconnect;
+  final ValueChanged<bool> onAutostartChanged;
+  final ValueChanged<bool> onAutoConnectChanged;
+  final ValueChanged<bool> onKillSwitchChanged;
+  final ValueChanged<bool> onAutoReconnectChanged;
+  final VoidCallback onOpenLogs;
   final VoidCallback onSyncAccount;
   final VoidCallback onLogin;
   final VoidCallback onOpenAccount;
@@ -4447,6 +5021,88 @@ class _SettingsPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final selectedActive = activeProducts[selected] == true;
 
+    final accountPanel = _AccountPanel(
+      product: selected,
+      email: accountEmail,
+      busy: busy,
+      onSync: onSyncAccount,
+      onLogin: onLogin,
+      onOpenAccount: onOpenAccount,
+      onLogout: onLogout,
+    );
+    final themePanel = _ThemePanel(
+      product: selected,
+      darkTheme: darkTheme,
+      onChanged: onDarkThemeChanged,
+    );
+    final Widget routeOrPurchase = selectedActive
+        ? _RoutePanel(
+            product: selected,
+            value: routeRussianDirect,
+            onChanged: busy ? null : onRouteChanged,
+          )
+        : _AccountPurchasePanel(
+            product: selected,
+            busy: busy,
+            signedIn: accountEmail != null,
+            onOpenAccount: onOpenAccount,
+            onSyncAccount: onSyncAccount,
+          );
+    final Widget? desktopOptions = Platform.isWindows
+        ? _DesktopOptionsPanel(
+            product: selected,
+            autostart: autostart,
+            autoConnect: autoConnect,
+            killSwitch: killSwitch,
+            autoReconnect: autoReconnect,
+            busy: busy,
+            onAutostartChanged: onAutostartChanged,
+            onAutoConnectChanged: onAutoConnectChanged,
+            onKillSwitchChanged: onKillSwitchChanged,
+            onAutoReconnectChanged: onAutoReconnectChanged,
+            onOpenLogs: onOpenLogs,
+          )
+        : null;
+
+    final titleRow = Padding(
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
+      child: Row(
+        children: [
+          IconButton(
+            onPressed: () => Navigator.of(context).maybePop(),
+            icon: Icon(Icons.arrow_back_rounded, color: AppColors.ink),
+            tooltip: 'Назад',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            'Настройки',
+            style: TextStyle(
+              fontSize: 26,
+              height: 1,
+              fontWeight: FontWeight.w700,
+              letterSpacing: -0.6,
+              color: AppColors.ink,
+            ),
+          ),
+        ],
+      ),
+    );
+
+    Widget scrollColumn(List<Widget> children) {
+      return ScrollConfiguration(
+        behavior: const _NoStretchScrollBehavior(),
+        child: SingleChildScrollView(
+          physics: const ClampingScrollPhysics(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: children,
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: Container(
@@ -4454,10 +5110,52 @@ class _SettingsPage extends StatelessWidget {
           gradient: AppGradients.backgroundFor(selected),
         ),
         child: SafeArea(
-          // Keep the settings content as a centered, fixed-width column so the
-          // cards don't stretch edge-to-edge on the wide desktop window.
           child: LayoutBuilder(
             builder: (context, constraints) {
+              // Wide desktop window: two columns, no scrolling needed. Left =
+              // account + appearance; right = routing + desktop options.
+              if (constraints.maxWidth >= 820) {
+                return Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 960),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        titleRow,
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(20, 6, 20, 16),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  child: scrollColumn([
+                                    accountPanel,
+                                    const SizedBox(height: 14),
+                                    themePanel,
+                                  ]),
+                                ),
+                                const SizedBox(width: 18),
+                                Expanded(
+                                  child: scrollColumn([
+                                    routeOrPurchase,
+                                    if (desktopOptions != null) ...[
+                                      const SizedBox(height: 14),
+                                      desktopOptions,
+                                    ],
+                                  ]),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
+
+              // Narrow (mobile): single scrolling column.
               final width =
                   constraints.maxWidth < 620 ? constraints.maxWidth : 620.0;
               return Center(
@@ -4466,82 +5164,24 @@ class _SettingsPage extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Padding(
-                        // Left padding lines up the back arrow and title with
-                        // the left edge of the cards below.
-                        padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
-                child: Row(
-                  children: [
-                    IconButton(
-                      onPressed: () => Navigator.of(context).maybePop(),
-                      icon: Icon(
-                        Icons.arrow_back_rounded,
-                        color: AppColors.ink,
-                      ),
-                      tooltip: 'Назад',
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(
-                        minWidth: 40,
-                        minHeight: 40,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Text(
-                      'Настройки',
-                      style: TextStyle(
-                        fontSize: 26,
-                        height: 1,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: -0.6,
-                        color: AppColors.ink,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: ScrollConfiguration(
-                  behavior: const _NoStretchScrollBehavior(),
-                  child: ListView(
-                    physics: const ClampingScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(20, 6, 20, 32),
-                    children: [
-                      _AccountPanel(
-                        product: selected,
-                        email: accountEmail,
-                        busy: busy,
-                        onSync: onSyncAccount,
-                        onLogin: onLogin,
-                        onOpenAccount: onOpenAccount,
-                        onLogout: onLogout,
-                      ),
-                      const SizedBox(height: 16),
-                      if (selectedActive) ...[
-                        _RoutePanel(
-                          product: selected,
-                          value: routeRussianDirect,
-                          onChanged: busy ? null : onRouteChanged,
+                      titleRow,
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 6, 20, 32),
+                          child: scrollColumn([
+                            accountPanel,
+                            const SizedBox(height: 16),
+                            routeOrPurchase,
+                            const SizedBox(height: 16),
+                            themePanel,
+                            if (desktopOptions != null) ...[
+                              const SizedBox(height: 16),
+                              desktopOptions,
+                            ],
+                          ]),
                         ),
-                      ] else ...[
-                        _AccountPurchasePanel(
-                          product: selected,
-                          busy: busy,
-                          signedIn: accountEmail != null,
-                          onOpenAccount: onOpenAccount,
-                          onSyncAccount: onSyncAccount,
-                        ),
-                      ],
-                      const SizedBox(height: 16),
-                      _ThemePanel(
-                        product: selected,
-                        darkTheme: darkTheme,
-                        onChanged: onDarkThemeChanged,
                       ),
                     ],
-                  ),
-                ),
-              ),
-            ],
                   ),
                 ),
               );
@@ -4594,7 +5234,7 @@ class _ThemePanel extends StatelessWidget {
                   style: TextStyle(
                     color: AppColors.ink,
                     fontSize: 17,
-                    fontWeight: FontWeight.w900,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
                 const SizedBox(height: 3),
@@ -4615,6 +5255,179 @@ class _ThemePanel extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+// Desktop-only options: autostart, auto-connect, kill-switch and a shortcut to
+// the logs folder.
+class _DesktopOptionsPanel extends StatelessWidget {
+  const _DesktopOptionsPanel({
+    required this.product,
+    required this.autostart,
+    required this.autoConnect,
+    required this.killSwitch,
+    required this.autoReconnect,
+    required this.busy,
+    required this.onAutostartChanged,
+    required this.onAutoConnectChanged,
+    required this.onKillSwitchChanged,
+    required this.onAutoReconnectChanged,
+    required this.onOpenLogs,
+  });
+
+  final VpnProduct product;
+  final bool autostart;
+  final bool autoConnect;
+  final bool killSwitch;
+  final bool autoReconnect;
+  final bool busy;
+  final ValueChanged<bool> onAutostartChanged;
+  final ValueChanged<bool> onAutoConnectChanged;
+  final ValueChanged<bool> onKillSwitchChanged;
+  final ValueChanged<bool> onAutoReconnectChanged;
+  final VoidCallback onOpenLogs;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = AppColors.accentFor(product);
+    return _Panel(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 4),
+      child: Column(
+        children: [
+          _DesktopOptionRow(
+            icon: Icons.restart_alt_rounded,
+            accent: accent,
+            title: 'Автозапуск с Windows',
+            subtitle: 'Запускать при входе в систему',
+            trailing: Switch(value: autostart, onChanged: onAutostartChanged),
+          ),
+          const _OptionDivider(),
+          _DesktopOptionRow(
+            icon: Icons.flash_on_rounded,
+            accent: accent,
+            title: 'Автоподключение',
+            subtitle: 'Подключаться сразу при запуске',
+            trailing:
+                Switch(value: autoConnect, onChanged: onAutoConnectChanged),
+          ),
+          const _OptionDivider(),
+          _DesktopOptionRow(
+            icon: Icons.autorenew_rounded,
+            accent: accent,
+            title: 'Авто-переподключение',
+            subtitle: 'Восстанавливать туннель при обрыве',
+            trailing:
+                Switch(value: autoReconnect, onChanged: onAutoReconnectChanged),
+          ),
+          const _OptionDivider(),
+          _DesktopOptionRow(
+            icon: Icons.shield_moon_rounded,
+            accent: accent,
+            title: 'Kill-switch',
+            subtitle: killSwitch
+                ? 'Блокирует интернет вне VPN (локальная сеть тоже недоступна)'
+                : 'Применится при следующем подключении',
+            trailing: Switch(
+              value: killSwitch,
+              onChanged: busy ? null : onKillSwitchChanged,
+            ),
+          ),
+          const _OptionDivider(),
+          _DesktopOptionRow(
+            icon: Icons.folder_open_rounded,
+            accent: accent,
+            title: 'Логи',
+            subtitle: 'Открыть папку с логами',
+            trailing:
+                Icon(Icons.chevron_right_rounded, color: AppColors.inkMuted),
+            onTap: onOpenLogs,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DesktopOptionRow extends StatelessWidget {
+  const _DesktopOptionRow({
+    required this.icon,
+    required this.accent,
+    required this.title,
+    required this.subtitle,
+    required this.trailing,
+    this.onTap,
+  });
+
+  final IconData icon;
+  final Color accent;
+  final String title;
+  final String subtitle;
+  final Widget trailing;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final row = Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Row(
+        children: [
+          Container(
+            width: 46,
+            height: 46,
+            decoration: BoxDecoration(
+              color: AppColors.glassStrong,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: AppColors.glassBorder),
+            ),
+            child: Icon(icon, color: accent),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: AppColors.ink,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    color: AppColors.inkSoft,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          trailing,
+        ],
+      ),
+    );
+    if (onTap == null) {
+      return row;
+    }
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: row,
+    );
+  }
+}
+
+class _OptionDivider extends StatelessWidget {
+  const _OptionDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    return Divider(height: 1, thickness: 1, color: AppColors.glassBorder);
   }
 }
 
@@ -4657,7 +5470,7 @@ class _RenewPanel extends StatelessWidget {
             'Продление',
             style: TextStyle(
               fontSize: 22,
-              fontWeight: FontWeight.w900,
+              fontWeight: FontWeight.w700,
               letterSpacing: -0.3,
               color: AppColors.ink,
             ),
@@ -4825,7 +5638,7 @@ class _PlanChip extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      fontWeight: FontWeight.w900,
+                      fontWeight: FontWeight.w700,
                       color: AppColors.ink,
                     ),
                   ),
@@ -4838,7 +5651,7 @@ class _PlanChip extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontSize: 18,
-                  fontWeight: FontWeight.w900,
+                  fontWeight: FontWeight.w700,
                   color: selected ? accent : AppColors.greenDeep,
                 ),
               ),
@@ -4873,7 +5686,7 @@ class _MessagePanel extends StatelessWidget {
               message,
               style: TextStyle(
                 color: AppColors.ink,
-                fontWeight: FontWeight.w700,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ),
@@ -4943,7 +5756,7 @@ class _TypeToast extends StatelessWidget {
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: AppColors.ink,
-                      fontWeight: FontWeight.w800,
+                      fontWeight: FontWeight.w600,
                       fontSize: 13,
                       height: 1.25,
                     ),
@@ -4995,7 +5808,7 @@ class _StatusChip extends StatelessWidget {
             label,
             style: TextStyle(
               color: color,
-              fontWeight: FontWeight.w900,
+              fontWeight: FontWeight.w700,
               fontSize: 12,
             ),
           ),
@@ -5026,7 +5839,7 @@ class _MiniChip extends StatelessWidget {
         overflow: TextOverflow.ellipsis,
         style: TextStyle(
           color: color,
-          fontWeight: FontWeight.w900,
+          fontWeight: FontWeight.w700,
           fontSize: 12,
         ),
       ),

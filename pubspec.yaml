@@ -14,6 +14,9 @@ dependencies:
   http: ^1.2.2
   shared_preferences: ^2.2.3
   url_launcher: ^6.3.0
+  # Desktop-only (Windows): minimize-to-tray support. Guarded by Platform.isWindows.
+  window_manager: ^0.4.2
+  tray_manager: ^0.3.2
 
 dev_dependencies:
   flutter_test:
@@ -33,6 +36,7 @@ flutter:
   assets:
     - assets/app_logo.png
     - assets/app_logo_mark.png
+    - assets/tray_icon.ico
     - assets/bin/windows/sing-box.exe
   fonts:
     - family: Manrope

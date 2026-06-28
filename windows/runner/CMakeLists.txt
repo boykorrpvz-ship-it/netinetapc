@@ -34,9 +34,8 @@ target_compile_definitions(${BINARY_NAME} PRIVATE "NOMINMAX")
 # dependencies here.
 target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)
 target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib")
-# advapi32: Windows service control (AmneziaWG tunnel service); shell32:
-# CommandLineToArgvW for the service command-line modes.
-target_link_libraries(${BINARY_NAME} PRIVATE "advapi32.lib" "shell32.lib")
+# shell32: CommandLineToArgvW, used by utils.cpp (GetCommandLineArguments).
+target_link_libraries(${BINARY_NAME} PRIVATE "shell32.lib")
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
 # runner.exe.manifest already declares the requested execution level

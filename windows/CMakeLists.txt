@@ -81,10 +81,12 @@ install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}
 install(FILES "${FLUTTER_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
   COMPONENT Runtime)
 
-# Bundle the AmneziaWG tunnel engine (amneziawg-windows embeddable service) and
-# Wintun (the TUN adapter driver it loads at runtime) next to the executable so
-# the :tunnelservice mode can create the tunnel.
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/runner/tunnel.dll"
+# Bundle the official AmneziaWG tunnel host (awgtunnel.exe, built from
+# amneziawg-windows v0.1.9 + amneziawg-go v0.2.18 — the same engine the official
+# amneziawg-windows-client ships) and Wintun (the TUN adapter driver it loads at
+# runtime) next to the executable. The app drives it with the official verbs
+# /installtunnelservice and /uninstalltunnelservice.
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/runner/awgtunnel.exe"
   DESTINATION "${INSTALL_BUNDLE_LIB_DIR}" COMPONENT Runtime)
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/runner/wintun.dll"
   DESTINATION "${INSTALL_BUNDLE_LIB_DIR}" COMPONENT Runtime)
