@@ -218,7 +218,7 @@ class VlessProfile {
         {
           'type': 'tun',
           'tag': 'tun-in',
-          'interface_name': 'ironvpn0',
+          'interface_name': 'netineta0',
           'address': ['172.19.0.1/30'],
           'auto_route': true,
           'strict_route': true,
