@@ -1,10 +1,12 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'config/app_config.dart';
 import 'ui/app_shell.dart';
 import 'ui/theme.dart';
 
@@ -12,6 +14,13 @@ const _themePreferenceKey = 'ironvpn_dark_theme';
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+  // The updater compares this against the latest GitHub release tag. Read it
+  // from the built binary so it can never drift from pubspec.yaml again.
+  try {
+    AppConfig.appVersion = (await PackageInfo.fromPlatform()).version;
+  } catch (_) {
+    // keep the fallback baked into AppConfig
+  }
   final preferences = await SharedPreferences.getInstance();
   final darkTheme = preferences.getBool(_themePreferenceKey) ?? true;
   // Set by the Windows logon autostart entry so we can come up minimized.
