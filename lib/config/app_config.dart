@@ -12,6 +12,6 @@ class AppConfig {
   // v0.2.12 release shipped with this constant still saying 0.2.11, so every
   // install immediately "found" the same update again, forever.
   // The literal below is only a fallback if PackageInfo somehow fails.
-  static String appVersion = '0.2.20';
+  static String appVersion = '0.2.21';
   static const updateRepo = 'boykorrpvz-ship-it/netinetapc';
 }
