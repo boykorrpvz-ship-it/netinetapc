@@ -1919,12 +1919,6 @@ class _DesktopAppFrame extends StatelessWidget {
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
-                        // One always-mounted driver keeps the shared sphere
-                        // animating. TickerMode(enabled:true) forces it to keep
-                        // ticking even when Settings is pushed on top (Flutter
-                        // otherwise mutes offstage tickers), so the sphere on the
-                        // Settings screen stays animated and continuous.
-                        const TickerMode(enabled: true, child: GlobeAnimator()),
                         // sphere median = power-button median: the power pane
                         // spans 410..980, so its centre is 695/980 of the width
                         GlobeBackground(product: product, anchorX: 695 / 980),
@@ -3689,9 +3683,6 @@ class _AppBackground extends StatelessWidget {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            // Single always-mounted driver → the sphere animates continuously
-            // even while Settings is pushed on top (forced ticker, see below).
-            const TickerMode(enabled: true, child: GlobeAnimator()),
             GlobeBackground(product: product, anchorX: 695 / 980),
             child,
           ],

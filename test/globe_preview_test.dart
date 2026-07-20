@@ -22,7 +22,6 @@ void main() {
             fit: StackFit.expand,
             children: [
               Container(color: const Color(0xFF070B0D)),
-              const GlobeAnimator(),
               const GlobeBackground(product: VpnProduct.vless),
             ],
           ),

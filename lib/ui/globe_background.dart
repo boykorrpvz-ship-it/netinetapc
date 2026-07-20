@@ -2,7 +2,6 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 
 import '../models/vpn_product.dart';
 import 'theme.dart';
@@ -13,10 +12,10 @@ import 'theme.dart';
 /// travel node-to-node along those routes. Slow Y rotation, fixed X tilt,
 /// perspective camera at z=15 (fov 45°) — same constants as the site.
 ///
-/// The animation lives in a single global [_GlobeSim] driven by one [Ticker],
-/// so every screen paints the SAME frame: switching to Settings and back is
-/// seamless — the sphere never restarts.
-class GlobeBackground extends StatelessWidget {
+/// Each instance animates itself with its own controller and packet set. This
+/// is deliberately simple and robust: no cross-screen shared driver (that broke
+/// when Settings, an opaque route, muted the covered screen's tickers).
+class GlobeBackground extends StatefulWidget {
   const GlobeBackground({required this.product, this.anchorX = 0.5, super.key});
 
   final VpnProduct product;
@@ -26,86 +25,49 @@ class GlobeBackground extends StatelessWidget {
   final double anchorX;
 
   @override
+  State<GlobeBackground> createState() => _GlobeBackgroundState();
+}
+
+class _GlobeBackgroundState extends State<GlobeBackground>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  final Stopwatch _clock = Stopwatch()..start();
+  final List<_Packet> _packets =
+      List.generate(_Geo.packetCount, (i) => _Packet.seeded(i));
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 1),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return IgnorePointer(
       child: RepaintBoundary(
         child: CustomPaint(
           painter: _GlobePainter(
-            sim: _GlobeSim.instance,
-            accent: AppColors.accentFor(product),
+            repaintTrigger: _controller,
+            clock: _clock,
+            packets: _packets,
+            accent: AppColors.accentFor(widget.product),
             dark: AppColors.isDark,
-            anchorX: anchorX,
+            anchorX: widget.anchorX,
           ),
           size: Size.infinite,
         ),
       ),
     );
   }
-}
-
-/// Single always-running simulation shared by every [GlobeBackground].
-/// Advances packets exactly once per frame regardless of how many painters
-/// are mounted, and notifies them to repaint.
-class _GlobeSim extends ChangeNotifier {
-  _GlobeSim._();
-
-  static final _GlobeSim instance = _GlobeSim._();
-
-  final List<_Packet> packets =
-      List.generate(_Geo.packetCount, (i) => _Packet.seeded(i));
-
-  double elapsed = 0; // seconds since start
-
-  /// Advance the shared simulation by [dt] seconds and repaint every painter.
-  /// Driven by the single [GlobeAnimator]; painters never advance it, so N
-  /// mounted globes still run at one speed.
-  void advance(double dt) {
-    if (dt <= 0 || dt > 0.25) {
-      dt = 1 / 60;
-    }
-    elapsed += dt;
-    for (final p in packets) {
-      p.advance(dt);
-    }
-    notifyListeners();
-  }
-}
-
-/// Invisible widget that ticks the shared globe simulation. Mount exactly one,
-/// high enough in the tree that it stays alive while Settings is pushed on top
-/// — that keeps the sphere's animation continuous across screen changes.
-class GlobeAnimator extends StatefulWidget {
-  const GlobeAnimator({super.key});
-
-  @override
-  State<GlobeAnimator> createState() => _GlobeAnimatorState();
-}
-
-class _GlobeAnimatorState extends State<GlobeAnimator>
-    with SingleTickerProviderStateMixin {
-  late final Ticker _ticker;
-  Duration _last = Duration.zero;
-
-  @override
-  void initState() {
-    super.initState();
-    _ticker = createTicker(_onTick)..start();
-  }
-
-  void _onTick(Duration now) {
-    final dt = (now - _last).inMicroseconds / 1e6;
-    _last = now;
-    _GlobeSim.instance.advance(dt);
-  }
-
-  @override
-  void dispose() {
-    _ticker.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => const SizedBox.shrink();
 }
 
 /// Static geometry shared by all instances — mirrors globe.js exactly.
@@ -233,23 +195,35 @@ class _Packet {
 
 class _GlobePainter extends CustomPainter {
   _GlobePainter({
-    required this.sim,
+    required Listenable repaintTrigger,
+    required this.clock,
+    required this.packets,
     required this.accent,
     required this.dark,
     required this.anchorX,
-  }) : super(repaint: sim);
+  }) : super(repaint: repaintTrigger);
 
-  final _GlobeSim sim;
+  final Stopwatch clock;
+  final List<_Packet> packets;
   final Color accent;
   final bool dark;
   final double anchorX;
+
+  double _lastTime = 0;
 
   @override
   void paint(Canvas canvas, Size size) {
     if (size.isEmpty) {
       return;
     }
-    final rotY = _Geo.rotSpeed * sim.elapsed;
+    final now = clock.elapsedMicroseconds / 1e6;
+    var dt = now - _lastTime;
+    if (dt <= 0 || dt > 0.25) {
+      dt = 1 / 60;
+    }
+    _lastTime = now;
+
+    final rotY = _Geo.rotSpeed * now;
     final cosY = math.cos(rotY), sinY = math.sin(rotY);
     const tilt = _Geo.tiltX;
     final cosX = math.cos(tilt), sinX = math.sin(tilt);
@@ -309,8 +283,9 @@ class _GlobePainter extends CustomPainter {
       canvas.drawCircle(nodeScreens[i], 0.055 * nodeF[i], nodePaint);
     }
 
-    // travelling glow packets
-    for (final p in sim.packets) {
+    // travelling glow packets — advanced here per frame
+    for (final p in packets) {
+      p.advance(dt);
       final pts = edgeScreens[p.edge]!;
       final tt = p.dir == 1 ? p.t : 1 - p.t;
       final omt = 1 - tt;
