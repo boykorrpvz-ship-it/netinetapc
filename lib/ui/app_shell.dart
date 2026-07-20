@@ -3128,18 +3128,9 @@ class _DesktopPowerPane extends StatelessWidget {
     final accent = AppColors.accentFor(product);
 
     return DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: RadialGradient(
-          center: const Alignment(0, -0.4),
-          radius: 1.2,
-          colors: [
-            accent.withValues(alpha: 0.16),
-            const Color(0xFF171922),
-            const Color(0xFF101218),
-          ],
-          stops: const [0, 0.46, 1],
-        ),
-      ),
+      // No opaque radial "vignette" here anymore — it blotted out the network
+      // globe backdrop. The pane is fully transparent; the globe shows through.
+      decoration: const BoxDecoration(),
       child: Stack(
         alignment: Alignment.center,
         children: [
