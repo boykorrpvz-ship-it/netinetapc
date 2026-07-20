@@ -13,19 +13,21 @@ class AppColors {
 
   static bool get isDark => _dark;
 
+  // Palette matches the netineta.com redesign: bg #070B0D/#0B1113, ink
+  // #EEF2F3, accent green #16B980 (on-accent #071011), AWG orange #F7860B.
   static Color get background =>
       _dark ? const Color(0xFF070B0D) : const Color(0xFFEEF3F6);
   static Color get backgroundAlt =>
-      _dark ? const Color(0xFF0B1216) : Colors.white;
+      _dark ? const Color(0xFF0B1113) : Colors.white;
   static Color get ink =>
-      _dark ? const Color(0xFFF2F7F6) : const Color(0xFF0A1C20);
+      _dark ? const Color(0xFFEEF2F3) : const Color(0xFF0A1C20);
   static Color get inkSoft =>
-      _dark ? const Color(0xFFAEBCC0) : const Color(0xFF45585E);
+      _dark ? const Color(0xFFC2CDD1) : const Color(0xFF45585E);
   static Color get inkMuted =>
-      _dark ? const Color(0xFF7C8A8F) : const Color(0xFF6C7E84);
+      _dark ? const Color(0xFF7C898E) : const Color(0xFF6C7E84);
 
   static Color get green =>
-      _dark ? const Color(0xFF19C08A) : const Color(0xFF07835C);
+      _dark ? const Color(0xFF16B980) : const Color(0xFF07835C);
   static Color get greenDeep =>
       _dark ? const Color(0xFF7FF0C6) : const Color(0xFF0A6F4F);
   static Color get orange =>
@@ -58,6 +60,26 @@ class AppColors {
 
   static Color accentDeepFor(VpnProduct product) =>
       product == VpnProduct.vless ? const Color(0xFF0FA577) : orangeDeep;
+}
+
+/// Typography accents from the site design: Space Grotesk for latin display
+/// text (wordmark, VLESS/AWG), JetBrains Mono for labels/statuses/configs.
+/// Both fall back to Manrope for glyphs they lack.
+class AppFonts {
+  AppFonts._();
+
+  static const display = 'SpaceGrotesk';
+  static const mono = 'JetBrainsMono';
+
+  /// Site-style mono eyebrow label: uppercase, letterspaced, muted.
+  static TextStyle monoLabel({Color? color, double size = 11}) => TextStyle(
+        fontFamily: mono,
+        fontFamilyFallback: const ['Manrope'],
+        fontSize: size,
+        letterSpacing: 1.6,
+        fontWeight: FontWeight.w500,
+        color: color ?? AppColors.inkMuted,
+      );
 }
 
 class AppGradients {

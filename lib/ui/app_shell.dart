@@ -20,6 +20,7 @@ import '../services/ip_info_service.dart';
 import '../services/profile_store.dart';
 import '../services/update_service.dart';
 import '../services/vpn_controller.dart';
+import 'globe_background.dart';
 import 'theme.dart';
 
 // When true, forces the desktop main view (control + power panes) without a
@@ -1936,7 +1937,11 @@ class _DesktopAppFrame extends StatelessWidget {
                     decoration: BoxDecoration(
                       gradient: AppGradients.backgroundFor(product),
                     ),
-                    child: Row(
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        GlobeBackground(product: product),
+                        Row(
                       children: [
                         if (showAccess && !_kForceMainPreview)
                           Expanded(
@@ -1994,6 +1999,8 @@ class _DesktopAppFrame extends StatelessWidget {
                             ),
                           ),
                         ],
+                      ],
+                    ),
                       ],
                     ),
                   ),
@@ -3702,7 +3709,13 @@ class _AppBackground extends StatelessWidget {
         decoration: BoxDecoration(
           gradient: AppGradients.backgroundFor(product),
         ),
-        child: child,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            GlobeBackground(product: product),
+            child,
+          ],
+        ),
       ),
     );
   }
@@ -5126,7 +5139,11 @@ class _SettingsPage extends StatelessWidget {
         decoration: BoxDecoration(
           gradient: AppGradients.backgroundFor(selected),
         ),
-        child: SafeArea(
+        child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        GlobeBackground(product: selected),
+                        SafeArea(
           child: LayoutBuilder(
             builder: (context, constraints) {
               // Wide desktop window: two columns, no scrolling needed. Left =
@@ -5209,6 +5226,8 @@ class _SettingsPage extends StatelessWidget {
             },
           ),
         ),
+                      ],
+                    ),
       ),
     );
   }
