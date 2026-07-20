@@ -4,7 +4,7 @@
 ; clean PC with no manual file copying.
 
 #define MyAppName "netineta"
-#define MyAppVersion "0.2.17"
+#define MyAppVersion "0.2.18"
 #define MyAppPublisher "netineta"
 #define MyAppExeName "netineta.exe"
 ; Paths are relative to this .iss file (windows\installer\).

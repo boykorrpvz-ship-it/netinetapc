@@ -12,9 +12,13 @@ import 'theme.dart';
 /// travel node-to-node along those routes. Slow Y rotation, fixed X tilt,
 /// perspective camera at z=15 (fov 45°) — same constants as the site.
 class GlobeBackground extends StatefulWidget {
-  const GlobeBackground({required this.product, super.key});
+  const GlobeBackground({required this.product, this.anchorX = 0.5, super.key});
 
   final VpnProduct product;
+
+  /// Horizontal centre of the sphere as a fraction of the canvas width.
+  /// The desktop layout passes the power-button median so both line up.
+  final double anchorX;
 
   @override
   State<GlobeBackground> createState() => _GlobeBackgroundState();
@@ -55,6 +59,7 @@ class _GlobeBackgroundState extends State<GlobeBackground>
             packets: _packets,
             accent: AppColors.accentFor(widget.product),
             dark: AppColors.isDark,
+            anchorX: widget.anchorX,
           ),
           size: Size.infinite,
         ),
@@ -194,12 +199,14 @@ class _GlobePainter extends CustomPainter {
     required this.packets,
     required this.accent,
     required this.dark,
+    required this.anchorX,
   }) : super(repaint: repaintTrigger);
 
   final Stopwatch clock;
   final List<_Packet> packets;
   final Color accent;
   final bool dark;
+  final double anchorX;
 
   double _lastTime = 0;
 
@@ -222,7 +229,7 @@ class _GlobePainter extends CustomPainter {
 
     // perspective: vertical fov 45° like the site camera
     final focal = size.height * 1.2071;
-    final center = Offset(size.width * 0.5, size.height * 0.5);
+    final center = Offset(size.width * anchorX, size.height * 0.5);
     final dim = dark ? 1.0 : 0.5;
 
     Offset project(_V3 p, List<double> zOut) {
@@ -311,5 +318,7 @@ class _GlobePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_GlobePainter oldDelegate) =>
-      oldDelegate.accent != accent || oldDelegate.dark != dark;
+      oldDelegate.accent != accent ||
+      oldDelegate.dark != dark ||
+      oldDelegate.anchorX != anchorX;
 }
