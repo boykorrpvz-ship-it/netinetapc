@@ -4,7 +4,7 @@
 ; clean PC with no manual file copying.
 
 #define MyAppName "netineta"
-#define MyAppVersion "0.2.18"
+#define MyAppVersion "0.2.19"
 #define MyAppPublisher "netineta"
 #define MyAppExeName "netineta.exe"
 ; Paths are relative to this .iss file (windows\installer\).
@@ -43,7 +43,8 @@ Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkedonce
+; "Создать ярлык на рабочем столе" — включён по умолчанию (no checkedonce).
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
 ; The complete Flutter release bundle: netineta.exe, data\ (app.so, assets,
@@ -60,7 +61,8 @@ Name: "{group}\Удалить {#MyAppName}";   Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}";     Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
+; "Запустить netineta" — выключен по умолчанию (unchecked).
+Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent unchecked
 
 [UninstallRun]
 ; Remove any leftover AmneziaWG tunnel service before files are deleted.

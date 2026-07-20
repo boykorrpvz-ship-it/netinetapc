@@ -2,15 +2,12 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'config/app_config.dart';
 import 'ui/app_shell.dart';
 import 'ui/theme.dart';
-
-const _themePreferenceKey = 'ironvpn_dark_theme';
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,8 +18,6 @@ Future<void> main(List<String> args) async {
   } catch (_) {
     // keep the fallback baked into AppConfig
   }
-  final preferences = await SharedPreferences.getInstance();
-  final darkTheme = preferences.getBool(_themePreferenceKey) ?? true;
   // Set by the Windows logon autostart entry so we can come up minimized.
   final launchedAtStartup = args.contains('--autostart');
 
@@ -33,20 +28,15 @@ Future<void> main(List<String> args) async {
     await windowManager.setPreventClose(true);
   }
 
-  runApp(IronVpnApp(
-    initialDarkTheme: darkTheme,
-    launchedAtStartup: launchedAtStartup,
-  ));
+  runApp(IronVpnApp(launchedAtStartup: launchedAtStartup));
 }
 
 class IronVpnApp extends StatefulWidget {
   const IronVpnApp({
-    required this.initialDarkTheme,
     this.launchedAtStartup = false,
     super.key,
   });
 
-  final bool initialDarkTheme;
   final bool launchedAtStartup;
 
   @override
@@ -55,7 +45,6 @@ class IronVpnApp extends StatefulWidget {
 
 class _IronVpnAppState extends State<IronVpnApp>
     with WindowListener, TrayListener {
-  late bool _darkTheme = widget.initialDarkTheme;
   // Only hide-to-tray once the tray icon is actually up, so a tray failure can
   // never leave the window hidden with no way to bring it back.
   bool _trayReady = false;
@@ -139,15 +128,7 @@ class _IronVpnAppState extends State<IronVpnApp>
     }
   }
 
-  Future<void> _setDarkTheme(bool value) async {
-    if (_darkTheme == value) {
-      return;
-    }
-    setState(() => _darkTheme = value);
-    final preferences = await SharedPreferences.getInstance();
-    await preferences.setBool(_themePreferenceKey, value);
-  }
-
+  // The app is dark-only (the light theme + toggle were removed).
   ThemeData _theme(Brightness brightness) {
     final dark = brightness == Brightness.dark;
     final scheme = ColorScheme.fromSeed(
@@ -252,19 +233,14 @@ class _IronVpnAppState extends State<IronVpnApp>
 
   @override
   Widget build(BuildContext context) {
-    final lightTheme = _theme(Brightness.light);
     final darkTheme = _theme(Brightness.dark);
-    AppColors.useDarkTheme(_darkTheme);
+    AppColors.useDarkTheme(true);
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'netineta',
-      theme: lightTheme,
-      darkTheme: darkTheme,
-      themeMode: _darkTheme ? ThemeMode.dark : ThemeMode.light,
-      home: AppShell(
-        darkTheme: _darkTheme,
-        onDarkThemeChanged: _setDarkTheme,
-      ),
+      theme: darkTheme,
+      themeMode: ThemeMode.dark,
+      home: const AppShell(),
     );
   }
 }

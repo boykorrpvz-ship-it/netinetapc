@@ -83,14 +83,7 @@ ThemeData _productTheme(BuildContext context, VpnProduct product) {
 }
 
 class AppShell extends StatefulWidget {
-  const AppShell({
-    required this.darkTheme,
-    required this.onDarkThemeChanged,
-    super.key,
-  });
-
-  final bool darkTheme;
-  final ValueChanged<bool> onDarkThemeChanged;
+  const AppShell({super.key});
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -334,15 +327,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text('Текущая версия: ${AppConfig.appVersion}'),
-                  if (info.notes != null) ...[
-                    const SizedBox(height: 12),
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxHeight: 160),
-                      child: SingleChildScrollView(
-                        child: Text(info.notes!),
-                      ),
-                    ),
-                  ],
+                  // Release notes ("что обновлено") intentionally not shown.
                   if (downloading) ...[
                     const SizedBox(height: 18),
                     LinearProgressIndicator(
@@ -1108,7 +1093,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
   Future<void> _openSettings() async {
     final sheetSelected = _selectedProduct;
-    var sheetDarkTheme = widget.darkTheme;
 
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
@@ -1132,11 +1116,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                   routeRussianDirect: _routeRussianDirect,
                   busy: _busy,
                   accountEmail: _accountEmail,
-                  darkTheme: sheetDarkTheme,
-                  onDarkThemeChanged: (value) {
-                    setSheetState(() => sheetDarkTheme = value);
-                    widget.onDarkThemeChanged(value);
-                  },
                   onRouteChanged: (value) async {
                     final operation = _toggleRussianDirect(value);
                     if (mounted) {
@@ -3704,7 +3683,10 @@ class _AppBackground extends StatelessWidget {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            GlobeBackground(product: product),
+            // Single always-mounted driver → the sphere animates continuously
+            // even while Settings is pushed on top of this background.
+            const GlobeAnimator(),
+            GlobeBackground(product: product, anchorX: 695 / 980),
             child,
           ],
         ),
@@ -4999,8 +4981,6 @@ class _SettingsPage extends StatelessWidget {
     required this.routeRussianDirect,
     required this.busy,
     required this.accountEmail,
-    required this.darkTheme,
-    required this.onDarkThemeChanged,
     required this.onRouteChanged,
     required this.autostart,
     required this.autoConnect,
@@ -5023,8 +5003,6 @@ class _SettingsPage extends StatelessWidget {
   final bool routeRussianDirect;
   final bool busy;
   final String? accountEmail;
-  final bool darkTheme;
-  final ValueChanged<bool> onDarkThemeChanged;
   final ValueChanged<bool> onRouteChanged;
   final bool autostart;
   final bool autoConnect;
@@ -5053,11 +5031,6 @@ class _SettingsPage extends StatelessWidget {
       onLogin: onLogin,
       onOpenAccount: onOpenAccount,
       onLogout: onLogout,
-    );
-    final themePanel = _ThemePanel(
-      product: selected,
-      darkTheme: darkTheme,
-      onChanged: onDarkThemeChanged,
     );
     final Widget routeOrPurchase = selectedActive
         ? _RoutePanel(
@@ -5139,7 +5112,7 @@ class _SettingsPage extends StatelessWidget {
         child: Stack(
                       fit: StackFit.expand,
                       children: [
-                        GlobeBackground(product: selected),
+                        GlobeBackground(product: selected, anchorX: 695 / 980),
                         SafeArea(
           child: LayoutBuilder(
             builder: (context, constraints) {
@@ -5162,8 +5135,6 @@ class _SettingsPage extends StatelessWidget {
                                 Expanded(
                                   child: scrollColumn([
                                     accountPanel,
-                                    const SizedBox(height: 14),
-                                    themePanel,
                                     if (updateCard != null) ...[
                                       const SizedBox(height: 14),
                                       updateCard,
@@ -5207,8 +5178,6 @@ class _SettingsPage extends StatelessWidget {
                             accountPanel,
                             const SizedBox(height: 16),
                             routeOrPurchase,
-                            const SizedBox(height: 16),
-                            themePanel,
                             if (desktopOptions != null) ...[
                               const SizedBox(height: 16),
                               desktopOptions,
@@ -5225,71 +5194,6 @@ class _SettingsPage extends StatelessWidget {
         ),
                       ],
                     ),
-      ),
-    );
-  }
-}
-
-class _ThemePanel extends StatelessWidget {
-  const _ThemePanel({
-    required this.product,
-    required this.darkTheme,
-    required this.onChanged,
-  });
-
-  final VpnProduct product;
-  final bool darkTheme;
-  final ValueChanged<bool> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final accent = AppColors.accentFor(product);
-    return _Panel(
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-      child: Row(
-        children: [
-          Container(
-            width: 46,
-            height: 46,
-            decoration: BoxDecoration(
-              color: AppColors.glassStrong,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: AppColors.glassBorder),
-            ),
-            child: Icon(
-              darkTheme ? Icons.dark_mode_rounded : Icons.light_mode_rounded,
-              color: darkTheme ? accent : AppColors.warn,
-            ),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Оформление',
-                  style: TextStyle(
-                    color: AppColors.ink,
-                    fontSize: 17,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  darkTheme ? 'Тёмная тема' : 'Светлая тема',
-                  style: TextStyle(
-                    color: AppColors.inkSoft,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Switch(
-            value: darkTheme,
-            onChanged: onChanged,
-          ),
-        ],
       ),
     );
   }

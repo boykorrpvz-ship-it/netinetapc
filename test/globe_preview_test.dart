@@ -18,18 +18,21 @@ void main() {
         debugShowCheckedModeBanner: false,
         home: RepaintBoundary(
           key: key,
-          child: Container(
-            color: const Color(0xFF070B0D),
-            child: const GlobeBackground(product: VpnProduct.vless),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Container(color: const Color(0xFF070B0D)),
+              const GlobeAnimator(),
+              const GlobeBackground(product: VpnProduct.vless),
+            ],
           ),
         ),
       ),
     );
-    // Let real time pass so rotation/packets reach a representative state.
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 1800)),
-    );
-    await tester.pump();
+    // Pump frames so the ticker advances rotation/packets to a live state.
+    for (var i = 0; i < 90; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
     await tester.runAsync(() async {
       final boundary =
           key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
