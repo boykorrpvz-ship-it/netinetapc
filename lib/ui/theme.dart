@@ -117,9 +117,10 @@ class AppGradients {
 class AppRadii {
   AppRadii._();
 
-  static const card = BorderRadius.all(Radius.circular(26));
-  static const tile = BorderRadius.all(Radius.circular(18));
-  static const chip = BorderRadius.all(Radius.circular(16));
+  // Site design: cards 22, tiles 16 (netineta.com glass panels)
+  static const card = BorderRadius.all(Radius.circular(22));
+  static const tile = BorderRadius.all(Radius.circular(16));
+  static const chip = BorderRadius.all(Radius.circular(14));
   static const pill = BorderRadius.all(Radius.circular(100));
 }
 

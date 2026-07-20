@@ -1,14 +1,16 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
 import '../models/vpn_product.dart';
 import 'theme.dart';
 
-/// The site's signature "network globe" backdrop (netineta.com), rendered
-/// natively: a fibonacci sphere of dots with a few connecting arcs and glow
-/// nodes, slowly rotating. Sits behind the app content at low opacity and is
-/// tinted with the active product's accent (green VLESS / orange AWG).
+/// Faithful port of the netineta.com network globe (globe.js / initGlobe):
+/// a fibonacci sphere of 1600 dots, 42 bright node markers, curved routes
+/// between each node's 3 nearest neighbours, and 16 glowing "packets" that
+/// travel node-to-node along those routes. Slow Y rotation, fixed X tilt,
+/// perspective camera at z=15 (fov 45°) — same constants as the site.
 class GlobeBackground extends StatefulWidget {
   const GlobeBackground({required this.product, super.key});
 
@@ -20,20 +22,25 @@ class GlobeBackground extends StatefulWidget {
 
 class _GlobeBackgroundState extends State<GlobeBackground>
     with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
+  late final AnimationController _ticker;
+  final Stopwatch _clock = Stopwatch()..start();
+  final List<_Packet> _packets = List.generate(
+    _Geo.packetCount,
+    (i) => _Packet.seeded(i),
+  );
 
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(
+    _ticker = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 90),
+      duration: const Duration(seconds: 1),
     )..repeat();
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _ticker.dispose();
     super.dispose();
   }
 
@@ -43,7 +50,9 @@ class _GlobeBackgroundState extends State<GlobeBackground>
       child: RepaintBoundary(
         child: CustomPaint(
           painter: _GlobePainter(
-            animation: _controller,
+            repaintTrigger: _ticker,
+            clock: _clock,
+            packets: _packets,
             accent: AppColors.accentFor(widget.product),
             dark: AppColors.isDark,
           ),
@@ -54,117 +63,249 @@ class _GlobeBackgroundState extends State<GlobeBackground>
   }
 }
 
+/// Static geometry shared by all instances — mirrors globe.js exactly.
+class _Geo {
+  static const int dotCount = 1600; // N
+  static const int nodeCount = 42; // NN
+  static const int neighbours = 3; // K
+  static const int packetCount = 16;
+  static const double radius = 5.0; // R
+  static const double camZ = 15.0;
+  static const double tiltX = -0.15;
+  static const double rotSpeed = 0.0016 * 60; // per second
+  static const double packetSpeed = 0.0075 * 60; // t units per second
+
+  static final List<_V3> dots = _fib(dotCount);
+  static final List<_V3> nodes = _fib(nodeCount);
+  static final List<_Edge> edges = _buildEdges();
+  static final List<List<int>> adj = _buildAdj();
+
+  static List<_V3> _fib(int n) {
+    final golden = math.pi * (3 - math.sqrt(5));
+    final out = <_V3>[];
+    for (var i = 0; i < n; i++) {
+      final y = 1 - (i / (n - 1)) * 2;
+      final rad = math.sqrt(1 - y * y);
+      final th = golden * i;
+      out.add(
+        _V3(math.cos(th) * rad * radius, y * radius, math.sin(th) * rad * radius),
+      );
+    }
+    return out;
+  }
+
+  static List<_Edge> _buildEdges() {
+    final edges = <_Edge>[];
+    final seen = <String>{};
+    for (var i = 0; i < nodeCount; i++) {
+      final order = List.generate(nodeCount, (j) => j)
+        ..remove(i)
+        ..sort(
+          (a, b) => nodes[i].dist(nodes[a]).compareTo(nodes[i].dist(nodes[b])),
+        );
+      for (var k = 0; k < neighbours; k++) {
+        final j = order[k];
+        final key = i < j ? '$i-$j' : '$j-$i';
+        if (!seen.add(key)) {
+          continue;
+        }
+        // curved route: midpoint lifted off the sphere (same formula as site)
+        final p1 = nodes[i];
+        final p2 = nodes[j];
+        final mid = _V3(
+          (p1.x + p2.x) / 2,
+          (p1.y + p2.y) / 2,
+          (p1.z + p2.z) / 2,
+        );
+        final lift = 1 + p1.dist(p2) / (radius * 2) * 1.15;
+        final ctrl = mid.normalized().scale(radius * lift);
+        edges.add(_Edge(i, j, ctrl));
+      }
+    }
+    return edges;
+  }
+
+  static List<List<int>> _buildAdj() {
+    final adj = List.generate(nodeCount, (_) => <int>[]);
+    for (var e = 0; e < edges.length; e++) {
+      adj[edges[e].a].add(e);
+      adj[edges[e].b].add(e);
+    }
+    return adj;
+  }
+}
+
+class _V3 {
+  const _V3(this.x, this.y, this.z);
+  final double x, y, z;
+
+  double dist(_V3 o) {
+    final dx = x - o.x, dy = y - o.y, dz = z - o.z;
+    return math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+
+  double get length => math.sqrt(x * x + y * y + z * z);
+  _V3 normalized() {
+    final l = length;
+    return _V3(x / l, y / l, z / l);
+  }
+
+  _V3 scale(double s) => _V3(x * s, y * s, z * s);
+}
+
+class _Edge {
+  const _Edge(this.a, this.b, this.ctrl);
+  final int a;
+  final int b;
+  final _V3 ctrl;
+}
+
+class _Packet {
+  _Packet.seeded(int i) : _rnd = math.Random(1000 + i) {
+    edge = _rnd.nextInt(_Geo.edges.length);
+    dir = _rnd.nextBool() ? 1 : -1;
+    t = _rnd.nextDouble();
+  }
+
+  final math.Random _rnd;
+  late int edge;
+  late int dir;
+  late double t;
+
+  void advance(double dt) {
+    t += _Geo.packetSpeed * dt;
+    if (t >= 1) {
+      t -= 1;
+      final e = _Geo.edges[edge];
+      final arrival = dir == 1 ? e.b : e.a;
+      final options =
+          _Geo.adj[arrival].where((ei) => ei != edge).toList(growable: false);
+      final pool = options.isNotEmpty ? options : _Geo.adj[arrival];
+      edge = pool[_rnd.nextInt(pool.length)];
+      dir = _Geo.edges[edge].a == arrival ? 1 : -1;
+    }
+  }
+}
+
 class _GlobePainter extends CustomPainter {
   _GlobePainter({
-    required this.animation,
+    required Listenable repaintTrigger,
+    required this.clock,
+    required this.packets,
     required this.accent,
     required this.dark,
-  }) : super(repaint: animation);
+  }) : super(repaint: repaintTrigger);
 
-  final Animation<double> animation;
+  final Stopwatch clock;
+  final List<_Packet> packets;
   final Color accent;
   final bool dark;
 
-  // Precomputed unit fibonacci sphere + stable arc pairs (same for every
-  // instance, so rebuilds don't reshuffle the picture).
-  static const _count = 900;
-  static final List<List<double>> _points = _buildPoints();
-  static final List<List<int>> _arcs = _buildArcs();
-
-  static List<List<double>> _buildPoints() {
-    final pts = <List<double>>[];
-    const golden = math.pi * (3 - 2.2360679); // pi*(3-sqrt(5))
-    for (var i = 0; i < _count; i++) {
-      final y = 1 - (i / (_count - 1)) * 2;
-      final r = math.sqrt(1 - y * y);
-      final theta = golden * i;
-      pts.add([math.cos(theta) * r, y, math.sin(theta) * r]);
-    }
-    return pts;
-  }
-
-  static List<List<int>> _buildArcs() {
-    final rnd = math.Random(7);
-    final arcs = <List<int>>[];
-    while (arcs.length < 34) {
-      final a = rnd.nextInt(_count);
-      final b = rnd.nextInt(_count);
-      final pa = _points[a];
-      final pb = _points[b];
-      final dx = pa[0] - pb[0], dy = pa[1] - pb[1], dz = pa[2] - pb[2];
-      final d = math.sqrt(dx * dx + dy * dy + dz * dz);
-      if (d > 0.25 && d < 0.85) {
-        arcs.add([a, b]);
-      }
-    }
-    return arcs;
-  }
+  double _lastTime = 0;
 
   @override
   void paint(Canvas canvas, Size size) {
     if (size.isEmpty) {
       return;
     }
-    final angle = animation.value * 2 * math.pi;
-    final cosA = math.cos(angle);
-    final sinA = math.sin(angle);
-    // Right-of-center, like the site (its globe group is offset to the right).
-    final center = Offset(size.width * 0.74, size.height * 0.52);
-    final radius = size.shortestSide * 0.62;
+    final now = clock.elapsedMicroseconds / 1e6;
+    var dt = now - _lastTime;
+    if (dt <= 0 || dt > 0.25) {
+      dt = 1 / 60;
+    }
+    _lastTime = now;
 
-    final projected = List<Offset?>.filled(_count, null);
-    final depth = List<double>.filled(_count, 0);
-    for (var i = 0; i < _count; i++) {
-      final p = _points[i];
-      final x = p[0] * cosA + p[2] * sinA;
-      final z = -p[0] * sinA + p[2] * cosA;
-      projected[i] = center + Offset(x * radius, p[1] * radius);
-      depth[i] = z; // -1 (back) .. 1 (front)
+    final rotY = _Geo.rotSpeed * now;
+    final cosY = math.cos(rotY), sinY = math.sin(rotY);
+    const tilt = _Geo.tiltX;
+    final cosX = math.cos(tilt), sinX = math.sin(tilt);
+
+    // perspective: vertical fov 45° like the site camera
+    final focal = size.height * 1.2071;
+    final center = Offset(size.width * 0.74, size.height * 0.52);
+    final dim = dark ? 1.0 : 0.5;
+
+    Offset project(_V3 p, List<double> zOut) {
+      // three.js group euler XYZ with z=0: v' = Rx(Ry(v))
+      final x1 = p.x * cosY + p.z * sinY;
+      final z1 = -p.x * sinY + p.z * cosY;
+      final y2 = p.y * cosX - z1 * sinX;
+      final z2 = p.y * sinX + z1 * cosX;
+      final f = focal / (_Geo.camZ - z2);
+      zOut[0] = z2;
+      zOut[1] = f;
+      return Offset(center.dx + x1 * f, center.dy - y2 * f);
     }
 
-    final baseOpacity = dark ? 1.0 : 0.55;
+    final z = List.filled(2, 0.0);
 
-    // arcs first (behind dots)
+    // --- routes (behind everything) ---
     final arcPaint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 0.7;
-    for (final arc in _arcs) {
-      final a = projected[arc[0]]!;
-      final b = projected[arc[1]]!;
-      final vis = (depth[arc[0]] + depth[arc[1]]) / 2;
-      if (vis < -0.15) {
-        continue;
-      }
-      arcPaint.color =
-          accent.withValues(alpha: (0.05 + vis * 0.08) * baseOpacity);
-      final mid = Offset.lerp(a, b, 0.5)!;
-      final away = (mid - center);
-      final ctrl = mid + away * 0.18;
+      ..strokeWidth = 1.0
+      ..color = accent.withValues(alpha: 0.16 * dim);
+    final nodeScreens = List<Offset>.filled(_Geo.nodeCount, Offset.zero);
+    final nodeF = List<double>.filled(_Geo.nodeCount, 1);
+    for (var i = 0; i < _Geo.nodeCount; i++) {
+      nodeScreens[i] = project(_Geo.nodes[i], z);
+      nodeF[i] = z[1];
+    }
+    final edgeScreens = <int, List<Offset>>{};
+    for (var e = 0; e < _Geo.edges.length; e++) {
+      final edge = _Geo.edges[e];
+      final a = nodeScreens[edge.a];
+      final b = nodeScreens[edge.b];
+      final c = project(edge.ctrl, z);
+      edgeScreens[e] = [a, c, b];
       final path = Path()
         ..moveTo(a.dx, a.dy)
-        ..quadraticBezierTo(ctrl.dx, ctrl.dy, b.dx, b.dy);
+        ..quadraticBezierTo(c.dx, c.dy, b.dx, b.dy);
       canvas.drawPath(path, arcPaint);
     }
 
-    // dots
-    final dotPaint = Paint();
-    for (var i = 0; i < _count; i++) {
-      final z = depth[i];
-      final alpha = (0.05 + (z + 1) * 0.16) * baseOpacity;
-      dotPaint.color = accent.withValues(alpha: alpha.clamp(0.02, 0.38));
-      canvas.drawCircle(projected[i]!, 0.9 + (z + 1) * 0.8, dotPaint);
+    // --- dotted sphere (site: size 0.05 world, opacity 0.55) ---
+    final dotPaint = Paint()..color = accent.withValues(alpha: 0.55 * dim);
+    for (final p in _Geo.dots) {
+      final o = project(p, z);
+      final r = 0.025 * z[1];
+      canvas.drawCircle(o, r.clamp(0.5, 3.0), dotPaint);
     }
 
-    // a few glowing nodes (site look)
-    final glowPaint = Paint()
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 7);
-    for (var i = 0; i < _count; i += 90) {
-      final z = depth[i];
-      if (z < 0.1) {
+    // --- bright node markers (site: solid spheres r=0.055) ---
+    final nodePaint = Paint()..color = accent.withValues(alpha: 1.0 * dim);
+    for (var i = 0; i < _Geo.nodeCount; i++) {
+      canvas.drawCircle(nodeScreens[i], 0.055 * nodeF[i], nodePaint);
+    }
+
+    // --- travelling glow packets (site: additive sprites, flash in/out) ---
+    for (final p in packets) {
+      p.advance(dt);
+      final pts = edgeScreens[p.edge]!;
+      final tt = p.dir == 1 ? p.t : 1 - p.t;
+      // point on the quadratic bezier in screen space
+      final omt = 1 - tt;
+      final pos = Offset(
+        omt * omt * pts[0].dx + 2 * omt * tt * pts[1].dx + tt * tt * pts[2].dx,
+        omt * omt * pts[0].dy + 2 * omt * tt * pts[1].dy + tt * tt * pts[2].dy,
+      );
+      final fadeIn = math.min(1.0, p.t / 0.12);
+      final fadeOut = math.min(1.0, (1 - p.t) / 0.4);
+      final op = math.min(fadeIn, fadeOut).clamp(0.0, 1.0);
+      if (op <= 0.01) {
         continue;
       }
-      glowPaint.color = accent.withValues(alpha: 0.30 * baseOpacity);
-      canvas.drawCircle(projected[i]!, 3.4, glowPaint);
+      final worldScale = 0.14 + op * 0.16;
+      final r = worldScale * focal / _Geo.camZ;
+      final glow = Paint()
+        ..blendMode = ui.BlendMode.plus
+        ..maskFilter = MaskFilter.blur(BlurStyle.normal, r * 0.6)
+        ..color = accent.withValues(alpha: 0.75 * op * dim);
+      canvas.drawCircle(pos, r * 0.7, glow);
+      final core = Paint()
+        ..blendMode = ui.BlendMode.plus
+        ..color = Color.lerp(accent, Colors.white, 0.55)!
+            .withValues(alpha: 0.9 * op * dim);
+      canvas.drawCircle(pos, r * 0.22, core);
     }
   }
 

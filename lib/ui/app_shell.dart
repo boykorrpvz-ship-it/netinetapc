@@ -3763,6 +3763,8 @@ class _Header extends StatelessWidget {
               Text(
                 'netineta',
                 style: TextStyle(
+                  fontFamily: AppFonts.display,
+                  fontFamilyFallback: const ['Manrope'],
                   fontSize: 24,
                   height: 1,
                   fontWeight: FontWeight.w700,
@@ -3770,12 +3772,15 @@ class _Header extends StatelessWidget {
                   color: AppColors.ink,
                 ),
               ),
-              SizedBox(height: 5),
+              const SizedBox(height: 5),
               Text(
-                'Стабильное соединение',
+                'STABLE CONNECTION',
                 style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
+                  fontFamily: AppFonts.mono,
+                  fontFamilyFallback: const ['Manrope'],
+                  fontSize: 10.5,
+                  letterSpacing: 3.2,
+                  fontWeight: FontWeight.w500,
                   color: accent,
                 ),
               ),
@@ -5909,9 +5914,12 @@ class _StatusChip extends StatelessWidget {
           Text(
             label,
             style: TextStyle(
+              fontFamily: AppFonts.mono,
+              fontFamilyFallback: const ['Manrope'],
               color: color,
-              fontWeight: FontWeight.w700,
-              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              fontSize: 11.5,
+              letterSpacing: 1.2,
             ),
           ),
         ],
