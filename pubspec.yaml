@@ -1,7 +1,7 @@
 name: ironvpn_mobile
 description: Simple cross-platform netineta mobile client.
 publish_to: "none"
-version: 0.2.19+2022
+version: 0.2.20+2023
 
 environment:
   sdk: ">=3.4.0 <4.0.0"

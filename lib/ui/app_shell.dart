@@ -1919,6 +1919,10 @@ class _DesktopAppFrame extends StatelessWidget {
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
+                        // One always-mounted driver keeps the shared sphere
+                        // animating (and continuous when Settings is pushed on
+                        // top of this desktop frame).
+                        const GlobeAnimator(),
                         // sphere median = power-button median: the power pane
                         // spans 410..980, so its centre is 695/980 of the width
                         GlobeBackground(product: product, anchorX: 695 / 980),
