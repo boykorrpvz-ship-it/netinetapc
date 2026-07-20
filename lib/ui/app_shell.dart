@@ -2267,10 +2267,9 @@ class _DesktopControlPane extends StatelessWidget {
     return Container(
       width: 410,
       padding: const EdgeInsets.fromLTRB(28, 24, 24, 24),
-      decoration: const BoxDecoration(
-        color: Color(0xB0000000),
-        border: Border(right: BorderSide(color: Color(0x16FFFFFF))),
-      ),
+      // No opaque black fill or divider line — the whole window reads as one
+      // surface over the globe; the pane's own glass cards carry the contrast.
+      decoration: const BoxDecoration(),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [

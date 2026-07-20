@@ -222,7 +222,7 @@ class _GlobePainter extends CustomPainter {
 
     // perspective: vertical fov 45° like the site camera
     final focal = size.height * 1.2071;
-    final center = Offset(size.width * 0.74, size.height * 0.52);
+    final center = Offset(size.width * 0.5, size.height * 0.5);
     final dim = dark ? 1.0 : 0.5;
 
     Offset project(_V3 p, List<double> zOut) {
