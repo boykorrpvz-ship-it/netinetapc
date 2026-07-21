@@ -31,6 +31,7 @@ $(GOROOT)/.prepared:
 	[ -n "$(REAL_GOROOT)" ]
 	mkdir -p "$(GOROOT)"
 	rsync -a --delete --exclude=pkg/obj/go-build "$(REAL_GOROOT)/" "$(GOROOT)/"
+	chmod -R u+w "$(GOROOT)"
 	cat goruntime-*.diff | patch -p1 -f -N -r- -d "$(GOROOT)"
 	touch "$@"
 
