@@ -33,8 +33,7 @@ let package = Package(
         ),
         .binaryTarget(
             name: "XRay",
-            url: "https://github.com/XIIIFOX/flutter_vless/releases/download/xray-ios-v26.6.1/XRay.xcframework.zip",
-            checksum: "13b512b31b394a701de95d1ea9ae7a8aad091d5b8d8db6d2e042374015254217"
+            path: "Artifacts/XRay.xcframework"
         )
     ]
 )

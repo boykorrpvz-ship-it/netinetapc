@@ -37,6 +37,9 @@ jobs:
       - name: Resolve Flutter packages
         run: flutter pub get
 
+      - name: Prepare XRay framework for packet tunnel
+        run: bash ios/scripts/prepare_xray_ios.sh
+
       - name: Install CocoaPods dependencies
         working-directory: ios
         run: pod install --repo-update
