@@ -40,10 +40,6 @@ let package = Package(
                 .linkedLibrary("wg-go"),
                 .linkedLibrary("resolv")
             ]
-        ),
-        .testTarget(
-            name: "WireGuardKitTests",
-            dependencies: ["WireGuardKit"]
         )
     ]
 )

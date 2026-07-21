@@ -35,6 +35,9 @@ flutter_launcher_icons:
   adaptive_icon_foreground: "assets/app_icon_fg.png"
 
 flutter:
+  config:
+    enable-swift-package-manager: false
+
   uses-material-design: true
   assets:
     - assets/app_logo.png
