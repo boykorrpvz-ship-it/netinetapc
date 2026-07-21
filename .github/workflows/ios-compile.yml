@@ -47,11 +47,26 @@ jobs:
       - name: Clear stale SwiftPM binary artifacts
         run: rm -rf "$HOME/Library/Caches/org.swift.swiftpm/artifacts"
 
+      - name: Generate Flutter iOS build configuration
+        run: flutter build ios --release --no-codesign --config-only
+
       - name: Compile iOS app without signing
-        run: flutter build ios --release --no-codesign
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -workspace ios/Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/ios-derived \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            build
 
       - name: Package compile artifact
-        run: ditto -c -k --sequesterRsrc --keepParent build/ios/iphoneos/Runner.app netineta-ios-unsigned.zip
+        run: ditto -c -k --sequesterRsrc --keepParent build/ios-derived/Build/Products/Release-iphoneos/Runner.app netineta-ios-unsigned.zip
 
       - name: Upload compile artifact
         uses: actions/upload-artifact@v4
