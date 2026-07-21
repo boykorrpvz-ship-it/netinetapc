@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
+import 'package:flutter_vless/flutter_vless.dart';
 import 'package:http/http.dart' as http;
 
 import '../models/stored_vpn_profile.dart';
@@ -19,6 +20,8 @@ enum VpnState {
 
 class VpnController {
   static const _channel = MethodChannel('shop.ironvpn/vpn');
+  static const _iosBundleIdentifier = 'shop.ironvpn.app';
+  static const _iosAppGroupIdentifier = 'group.shop.ironvpn.app';
   // AmneziaWG tunnel naming. The tunnel name is derived from the config file
   // name (netineta-awg.conf), and the Windows service name follows the official
   // amneziawg-windows scheme: "AmneziaWGTunnel$<name>".
@@ -28,6 +31,15 @@ class VpnController {
   static bool _windowsRunning = false;
   // True while the AmneziaWG tunnel service (Windows) is installed/running.
   static bool _windowsAwgActive = false;
+
+  VpnController() {
+    _iosVless = FlutterVless(onStatusChanged: _handleIosVlessStatus);
+  }
+
+  late final FlutterVless _iosVless;
+  var _iosVlessState = VpnState.disconnected;
+  var _iosVlessInitialized = false;
+  VpnProduct? _iosActiveProduct;
 
   Future<String?> stableDeviceId() async {
     if (Platform.isWindows) {
@@ -45,9 +57,26 @@ class VpnController {
     }
   }
 
-  Future<bool> prepare() async {
+  Future<bool> prepare({VpnProduct? product}) async {
     if (Platform.isWindows) {
       return true;
+    }
+
+    if (Platform.isIOS) {
+      if (product == VpnProduct.amneziaWg) {
+        try {
+          return await _channel.invokeMethod<bool>('prepare') ?? false;
+        } on MissingPluginException {
+          return false;
+        }
+      }
+
+      try {
+        await _ensureIosVlessInitialized();
+        return await _iosVless.requestPermission();
+      } catch (_) {
+        return false;
+      }
     }
 
     try {
@@ -65,6 +94,37 @@ class VpnController {
       }
       _windowsAwgActive = false;
       return _windowsRunning ? VpnState.connected : VpnState.disconnected;
+    }
+
+    if (Platform.isIOS) {
+      if (_iosActiveProduct != VpnProduct.vless) {
+        try {
+          final raw = await _channel.invokeMethod<String>('status');
+          final awgState = _stateFromString(raw);
+          if (awgState != VpnState.disconnected) {
+            _iosActiveProduct = VpnProduct.amneziaWg;
+            return awgState;
+          }
+        } on MissingPluginException {
+          if (_iosActiveProduct == VpnProduct.amneziaWg) {
+            return VpnState.unsupported;
+          }
+        } catch (_) {
+          if (_iosActiveProduct == VpnProduct.amneziaWg) {
+            return VpnState.error;
+          }
+        }
+      }
+
+      try {
+        await _ensureIosVlessInitialized();
+        if (_iosVlessState != VpnState.disconnected) {
+          _iosActiveProduct = VpnProduct.vless;
+        }
+        return _iosVlessState;
+      } catch (_) {
+        return VpnState.error;
+      }
     }
 
     try {
@@ -90,6 +150,25 @@ class VpnController {
       );
     }
 
+    if (Platform.isIOS && profile.product == VpnProduct.vless) {
+      try {
+        await _ensureIosVlessInitialized();
+        _iosActiveProduct = VpnProduct.vless;
+        _iosVlessState = VpnState.connecting;
+        await _iosVless.startVless(
+          remark: profile.name,
+          config: _iosXrayConfig(
+            profile.vlessProfile,
+            routeRussianServicesDirect: routeRussianServicesDirect,
+          ),
+        );
+        return await _waitForIosVlessState();
+      } catch (_) {
+        _iosVlessState = VpnState.error;
+        return VpnState.error;
+      }
+    }
+
     final protocol = profile.product.apiValue;
     final configPayload = switch (profile.product) {
       VpnProduct.vless => profile.vlessProfile.toSingBoxConfigJson(
@@ -99,6 +178,9 @@ class VpnController {
     };
 
     try {
+      if (Platform.isIOS) {
+        _iosActiveProduct = profile.product;
+      }
       final raw = await _channel.invokeMethod<String>('start', {
         'profileName': profile.name,
         'protocol': protocol,
@@ -130,6 +212,27 @@ class VpnController {
       return _stopWindows();
     }
 
+    if (Platform.isIOS && _iosActiveProduct == VpnProduct.vless) {
+      try {
+        await _ensureIosVlessInitialized();
+        _iosVlessState = VpnState.disconnecting;
+        await _iosVless.stopVless();
+        final state = await _waitForIosVlessState(
+          terminalStates: const {
+            VpnState.disconnected,
+            VpnState.error,
+          },
+        );
+        if (state == VpnState.disconnected) {
+          _iosActiveProduct = null;
+        }
+        return state;
+      } catch (_) {
+        _iosVlessState = VpnState.error;
+        return VpnState.error;
+      }
+    }
+
     try {
       final raw = await _channel.invokeMethod<String>('stop');
       var state = _stateFromString(raw);
@@ -137,6 +240,9 @@ class VpnController {
         if (state == VpnState.disconnected ||
             state == VpnState.unsupported ||
             state == VpnState.error) {
+          if (Platform.isIOS && state == VpnState.disconnected) {
+            _iosActiveProduct = null;
+          }
           return state;
         }
 
@@ -158,6 +264,93 @@ class VpnController {
       ),
     );
   }
+
+  Future<void> _ensureIosVlessInitialized() async {
+    if (_iosVlessInitialized) {
+      return;
+    }
+
+    await _iosVless.initializeVless(
+      providerBundleIdentifier: _iosBundleIdentifier,
+      groupIdentifier: _iosAppGroupIdentifier,
+    );
+    _iosVlessInitialized = true;
+  }
+
+  Future<VpnState> _waitForIosVlessState({
+    Set<VpnState> terminalStates = const {
+      VpnState.connected,
+      VpnState.disconnected,
+      VpnState.error,
+    },
+  }) async {
+    for (var attempt = 0; attempt < 40; attempt++) {
+      if (terminalStates.contains(_iosVlessState)) {
+        return _iosVlessState;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    }
+    return _iosVlessState;
+  }
+
+  void _handleIosVlessStatus(VlessStatus status) {
+    _iosVlessState = switch (status.connectionState) {
+      VlessConnectionState.connected => VpnState.connected,
+      VlessConnectionState.connecting => VpnState.connecting,
+      VlessConnectionState.disconnected => VpnState.disconnected,
+      VlessConnectionState.disconnecting => VpnState.disconnecting,
+      VlessConnectionState.unknown => VpnState.error,
+    };
+  }
+
+  String _iosXrayConfig(
+    VlessProfile profile, {
+    required bool routeRussianServicesDirect,
+  }) {
+    final parsed = FlutterVless.parse(profile.rawLink);
+    final config = Map<String, dynamic>.from(parsed.fullConfiguration);
+
+    if (routeRussianServicesDirect) {
+      final routing = Map<String, dynamic>.from(
+        config['routing'] as Map? ?? const <String, dynamic>{},
+      );
+      routing['domainStrategy'] = 'IPIfNonMatch';
+      routing['rules'] = [
+        {
+          'type': 'field',
+          'domain': _iosDirectDomainSuffixes
+              .map((domain) => 'domain:$domain')
+              .toList(growable: false),
+          'outboundTag': 'direct',
+        },
+      ];
+      config['routing'] = routing;
+    }
+
+    return const JsonEncoder.withIndent('  ').convert(config);
+  }
+
+  static const _iosDirectDomainSuffixes = [
+    'ozon.ru',
+    'wildberries.ru',
+    'avito.ru',
+    'gosuslugi.ru',
+    'yandex.ru',
+    'ya.ru',
+    'vk.com',
+    'ok.ru',
+    'mail.ru',
+    'sberbank.ru',
+    'tbank.ru',
+    'tinkoff.ru',
+    'alfabank.ru',
+    'vtb.ru',
+    '2ip.ru',
+    'faceit.com',
+    'steamcommunity.com',
+    'steampowered.com',
+    'steamstatic.com',
+  ];
 
   Future<int?> testLatency(StoredVpnProfile profile) async {
     final String host;
@@ -206,9 +399,8 @@ class VpnController {
 
   // Parses "Endpoint = host:port" from an AmneziaWG/WireGuard config payload.
   (String, int)? _awgEndpoint(String payload) {
-    final match =
-        RegExp(r'^\s*Endpoint\s*=\s*(.+):(\d+)\s*$', multiLine: true)
-            .firstMatch(payload);
+    final match = RegExp(r'^\s*Endpoint\s*=\s*(.+):(\d+)\s*$', multiLine: true)
+        .firstMatch(payload);
     if (match == null) {
       return null;
     }
@@ -659,8 +851,8 @@ try {
     final result = Map<String, dynamic>.from(config);
 
     // Desktop-only: enable the Clash API for accurate up/down stats.
-    final experimental = Map<String, dynamic>.from(
-        (result['experimental'] as Map?) ?? const {});
+    final experimental =
+        Map<String, dynamic>.from((result['experimental'] as Map?) ?? const {});
     experimental['clash_api'] = {
       'external_controller': '127.0.0.1:$_clashPort',
       'secret': _clashSecret,

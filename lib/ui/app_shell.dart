@@ -1191,7 +1191,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
     await _store.saveSelectedProduct(_selectedProduct);
 
-    final prepared = await _vpn.prepare();
+    final prepared = await _vpn.prepare(product: profile.product);
     if (!prepared) {
       setState(() {
         _busy = false;

@@ -219,6 +219,21 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
+  flutter_vless:
+    dependency: "direct main"
+    description:
+      path: "third_party/flutter_vless_ios"
+      relative: true
+    source: path
+    version: "1.1.1"
+  flutter_vless_platform_interface:
+    dependency: transitive
+    description:
+      name: flutter_vless_platform_interface
+      sha256: "5f14b7c0052a3457ec1eff1ab5f77a48963b96ea83895f0337a1f5bfc5346137"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.1.0"
   flutter_web_plugins:
     dependency: transitive
     description: flutter

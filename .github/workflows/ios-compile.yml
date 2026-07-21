@@ -1,0 +1,56 @@
+name: iOS compile
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - ios-device-build
+    paths:
+      - .github/workflows/ios-compile.yml
+      - ios/**
+      - lib/**
+      - third_party/flutter_vless_ios/**
+      - pubspec.yaml
+      - pubspec.lock
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Set up Go for AmneziaWG
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+          cache-dependency-path: ios/Packages/AmneziaWGKit/Sources/WireGuardKitGo/go.sum
+
+      - name: Resolve Flutter packages
+        run: flutter pub get
+
+      - name: Install CocoaPods dependencies
+        working-directory: ios
+        run: pod install --repo-update
+
+      - name: Compile iOS app without signing
+        run: flutter build ios --release --no-codesign
+
+      - name: Package compile artifact
+        run: ditto -c -k --sequesterRsrc --keepParent build/ios/iphoneos/Runner.app netineta-ios-unsigned.zip
+
+      - name: Upload compile artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: netineta-ios-unsigned
+          path: netineta-ios-unsigned.zip
+          if-no-files-found: error
+          retention-days: 7

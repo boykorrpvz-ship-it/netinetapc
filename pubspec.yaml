@@ -12,6 +12,8 @@ dependencies:
   app_links: ^6.3.2
   package_info_plus: ^8.0.0
   flutter_secure_storage: ^9.2.2
+  flutter_vless:
+    path: third_party/flutter_vless_ios
   http: ^1.2.2
   shared_preferences: ^2.2.3
   url_launcher: ^6.3.0
