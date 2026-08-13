@@ -25,6 +25,10 @@ class ProfileStore {
   static const _autoConnectKey = 'ironvpn.autoconnect';
   static const _killSwitchKey = 'ironvpn.killswitch';
   static const _autoReconnectKey = 'ironvpn.autoreconnect';
+  static const _selectedOrderPrefix = 'ironvpn.selected_order.';
+
+  String _selectedOrderKeyFor(VpnProduct product) =>
+      '$_selectedOrderPrefix${product.apiValue}';
 
   String _profileKeyFor(VpnProduct product) =>
       '$_profileKey.${product.apiValue}';
@@ -128,6 +132,7 @@ class ProfileStore {
       await prefs.remove(_paymentUrlKeyFor(product));
       await prefs.remove(_renewalAccessKeyFor(product));
       await prefs.remove(_renewalUrlKeyFor(product));
+      await prefs.remove(_selectedOrderKeyFor(product));
     }
   }
 
@@ -191,6 +196,24 @@ class ProfileStore {
   Future<void> saveSelectedProduct(VpnProduct product) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_selectedProductKey, product.apiValue);
+  }
+
+  // Which specific config (orderId) the user chose for a product, when the
+  // account has more than one active subscription of that product.
+  Future<String?> loadSelectedOrder(VpnProduct product) async {
+    final prefs = await SharedPreferences.getInstance();
+    final value = prefs.getString(_selectedOrderKeyFor(product));
+    return value == null || value.isEmpty ? null : value;
+  }
+
+  Future<void> saveSelectedOrder(VpnProduct product, String orderId) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_selectedOrderKeyFor(product), orderId);
+  }
+
+  Future<void> clearSelectedOrder(VpnProduct product) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_selectedOrderKeyFor(product));
   }
 
   Future<String> loadOrCreateInstallId() async {

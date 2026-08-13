@@ -8,6 +8,7 @@ import '../models/create_payment_result.dart';
 import '../models/order_access.dart';
 import '../models/subscription.dart';
 import '../models/vpn_product.dart';
+import 'platform_client.dart';
 
 class IronVpnApi {
   const IronVpnApi({
@@ -171,7 +172,7 @@ class IronVpnApi {
     Future<http.Response> Function(http.Client client) request,
   ) async {
     final ownedClient = _client == null;
-    final client = _client ?? http.Client();
+    final client = _client ?? PlatformHttpClient();
 
     try {
       final response =

@@ -23,7 +23,8 @@ class UpdateInfo {
 class UpdateService {
   /// Returns info about a newer release, or null if up to date / unavailable.
   Future<UpdateInfo?> checkForUpdate() async {
-    if (!Platform.isWindows) {
+    // Авто-проверка обновлений: Windows (.exe) и Android (.apk).
+    if (!Platform.isWindows && !Platform.isAndroid) {
       return null;
     }
     try {
@@ -48,12 +49,13 @@ class UpdateService {
       if (latest.isEmpty || !_isNewer(latest, AppConfig.appVersion)) {
         return null;
       }
-      // Pick the first .exe asset (the installer).
+      // Windows -> установщик .exe, Android -> .apk.
+      final wantExt = Platform.isAndroid ? '.apk' : '.exe';
       final assets = (data['assets'] as List?) ?? const [];
       String? url;
       for (final asset in assets) {
         final name = (asset['name'] ?? '').toString().toLowerCase();
-        if (name.endsWith('.exe')) {
+        if (name.endsWith(wantExt)) {
           url = (asset['browser_download_url'] ?? '').toString();
           break;
         }
@@ -61,11 +63,11 @@ class UpdateService {
       if (url == null || url.isEmpty) {
         return null;
       }
-      final notes = data['body']?.toString();
+      // Release notes ("что обновлено") намеренно НЕ тянем и не показываем в
+      // приложении — описание версии живёт только в GitHub release notes.
       return UpdateInfo(
         version: latest,
         downloadUrl: url,
-        notes: notes != null && notes.trim().isNotEmpty ? notes.trim() : null,
       );
     } catch (_) {
       return null;

@@ -109,6 +109,12 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     VpnProduct.vless: null,
     VpnProduct.amneziaWg: null,
   };
+  // All active subscriptions of each product, so the user can pick which one to
+  // use when the account has more than one (otherwise the first was used).
+  final Map<VpnProduct, List<Subscription>> _configOptions = {
+    VpnProduct.vless: <Subscription>[],
+    VpnProduct.amneziaWg: <Subscription>[],
+  };
   StreamSubscription<Uri>? _linkSub;
   Timer? _accessTimer;
   VpnProduct _selectedProduct = VpnProduct.vless;
@@ -347,6 +353,22 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                       ),
                       FilledButton(
                         onPressed: () async {
+                          if (Platform.isAndroid) {
+                            // Android: открываем .apk в браузере — он скачает,
+                            // система предложит установить (без спец-разрешений).
+                            final ok = await launchUrl(
+                              Uri.parse(info.downloadUrl),
+                              mode: LaunchMode.externalApplication,
+                            );
+                            if (dialogContext.mounted) {
+                              Navigator.of(dialogContext).pop();
+                            }
+                            if (!ok) {
+                              _showMessage(
+                                  'Не удалось открыть загрузку обновления.');
+                            }
+                            return;
+                          }
                           setDialogState(() => downloading = true);
                           final file =
                               await _updateService.downloadInstaller(
@@ -594,8 +616,17 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
   Future<void> _applyAccountSnapshot(AccountSnapshot snapshot) async {
     for (final product in VpnProduct.values) {
-      final subscription = snapshot.activeFor(product);
-      if (subscription != null) {
+      final options = snapshot.orders
+          .where((order) => order.product == product && order.isActive)
+          .toList(growable: false);
+      _configOptions[product] = options;
+
+      if (options.isNotEmpty) {
+        final savedId = await _store.loadSelectedOrder(product);
+        final subscription = options.firstWhere(
+          (order) => order.orderId == savedId,
+          orElse: () => options.first,
+        );
         await _applySubscription(subscription);
         continue;
       }
@@ -664,6 +695,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       _access[product] = null;
       _subscriptions[product] = null;
       _profiles[product] = null;
+      _configOptions[product] = <Subscription>[];
     }
 
     _selectedProduct = VpnProduct.vless;
@@ -1246,6 +1278,58 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     });
   }
 
+  // Switch the active subscription of a product to a specific one the user
+  // picked (only relevant when the account has 2+ active configs of that type).
+  Future<void> _selectConfig(Subscription subscription) async {
+    final product = subscription.product;
+    if (!subscription.isActive ||
+        _subscriptions[product]?.orderId == subscription.orderId) {
+      return;
+    }
+
+    await _store.saveSelectedOrder(product, subscription.orderId);
+    await _applySubscription(subscription);
+
+    final shouldReconnect =
+        _connectedProduct == product && _state == VpnState.connected;
+
+    if (mounted) {
+      setState(() {});
+    }
+
+    if (shouldReconnect) {
+      await _disconnect();
+      if (_subscriptions[product]?.isActive == true) {
+        await _connect();
+      }
+    } else if (mounted) {
+      _showMessage('Выбран конфиг: ${subscription.deviceName}');
+    }
+  }
+
+  Future<void> _openConfigPicker() async {
+    final product = _selectedProduct;
+    final options = _configOptions[product] ?? const <Subscription>[];
+    if (options.length < 2) {
+      return;
+    }
+
+    final selected = await showModalBottomSheet<Subscription>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) => _ConfigPickerSheet(
+        product: product,
+        options: options,
+        selectedOrderId: _subscriptions[product]?.orderId,
+      ),
+    );
+
+    if (selected != null) {
+      await _selectConfig(selected);
+    }
+  }
+
   Future<void> _syncVpnState() async {
     final state = await _vpn.status();
     if (!mounted) {
@@ -1616,6 +1700,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           onDisconnect: _disconnect,
           onRefreshSelected: () => _refreshSubscription(_selectedProduct),
           onReplaceConfig: _replaceConfig,
+          configOptions:
+              Map<VpnProduct, List<Subscription>>.unmodifiable(_configOptions),
+          onPickConfig: _openConfigPicker,
           onRouteChanged: _busy ? null : _toggleRussianDirect,
           onSettings: _openSettings,
           onOpenLogin: _openLoginScreen,
@@ -1694,6 +1781,25 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                                             ),
                                         ],
                                       ),
+                                      if ((_configOptions[_selectedProduct]
+                                                  ?.length ??
+                                              0) >=
+                                          2) ...[
+                                        SizedBox(height: compact ? 8 : 12),
+                                        _ConfigSelectorButton(
+                                          product: _selectedProduct,
+                                          deviceName:
+                                              _subscriptions[_selectedProduct]
+                                                      ?.deviceName ??
+                                                  '',
+                                          count:
+                                              _configOptions[_selectedProduct]!
+                                                  .length,
+                                          onTap: _busy
+                                              ? null
+                                              : _openConfigPicker,
+                                        ),
+                                      ],
                                       SizedBox(height: compact ? 10 : 16),
                                       _RoundConnectButton(
                                         busy: _busy,
@@ -1837,6 +1943,8 @@ class _DesktopAppFrame extends StatelessWidget {
     required this.onDisconnect,
     required this.onRefreshSelected,
     required this.onReplaceConfig,
+    required this.configOptions,
+    required this.onPickConfig,
     required this.onRouteChanged,
     required this.onSettings,
     required this.onOpenLogin,
@@ -1875,6 +1983,8 @@ class _DesktopAppFrame extends StatelessWidget {
   final VoidCallback onDisconnect;
   final VoidCallback onRefreshSelected;
   final VoidCallback onReplaceConfig;
+  final Map<VpnProduct, List<Subscription>> configOptions;
+  final VoidCallback? onPickConfig;
   final ValueChanged<bool>? onRouteChanged;
   final VoidCallback onSettings;
   final VoidCallback onOpenLogin;
@@ -1959,6 +2069,8 @@ class _DesktopAppFrame extends StatelessWidget {
                             onReplaceConfig: onReplaceConfig,
                             onRouteChanged: onRouteChanged,
                             onSettings: onSettings,
+                            configOptions: configOptions,
+                            onPickConfig: onPickConfig,
                           ),
                           Expanded(
                             child: _DesktopPowerPane(
@@ -2221,6 +2333,8 @@ class _DesktopControlPane extends StatelessWidget {
     required this.onReplaceConfig,
     required this.onRouteChanged,
     required this.onSettings,
+    required this.configOptions,
+    required this.onPickConfig,
   });
 
   final VpnProduct product;
@@ -2230,6 +2344,8 @@ class _DesktopControlPane extends StatelessWidget {
   final Map<VpnProduct, OrderAccess?> access;
   final Map<VpnProduct, Subscription?> subscriptions;
   final Map<VpnProduct, StoredVpnProfile?> profiles;
+  final Map<VpnProduct, List<Subscription>> configOptions;
+  final VoidCallback? onPickConfig;
   final Map<VpnProduct, bool> activeProducts;
   final Map<VpnProduct, bool> pendingProducts;
   final ValueChanged<VpnProduct>? onSelected;
@@ -2341,6 +2457,15 @@ class _DesktopControlPane extends StatelessWidget {
             profile: profile,
             onRefresh: busy ? null : onRefreshSelected,
           ),
+          if ((configOptions[product]?.length ?? 0) >= 2) ...[
+            const SizedBox(height: 12),
+            _ConfigSelectorButton(
+              product: product,
+              deviceName: subscription?.deviceName ?? '',
+              count: configOptions[product]!.length,
+              onTap: busy ? null : onPickConfig,
+            ),
+          ],
           const SizedBox(height: 14),
           Row(
             children: [
@@ -5892,6 +6017,224 @@ class _Panel extends StatelessWidget {
       padding: padding,
       decoration: AppDecorations.panel,
       child: child,
+    );
+  }
+}
+
+// Bottom sheet that lets the user pick which config to use when the account
+// has more than one active subscription of the selected product.
+class _ConfigPickerSheet extends StatelessWidget {
+  const _ConfigPickerSheet({
+    required this.product,
+    required this.options,
+    required this.selectedOrderId,
+  });
+
+  final VpnProduct product;
+  final List<Subscription> options;
+  final String? selectedOrderId;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = AppColors.accentFor(product);
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
+          decoration: BoxDecoration(
+            color: AppColors.backgroundAlt,
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: AppColors.glassBorder),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Выбор конфига',
+                style: TextStyle(
+                  color: AppColors.ink,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                product == VpnProduct.vless ? 'VLESS' : 'AmneziaWG',
+                style: TextStyle(
+                  color: AppColors.inkSoft,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 14),
+              for (final sub in options)
+                _ConfigPickerTile(
+                  subscription: sub,
+                  accent: accent,
+                  selected: sub.orderId == selectedOrderId,
+                  onTap: () => Navigator.of(context).pop(sub),
+                ),
+              const SizedBox(height: 4),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ConfigPickerTile extends StatelessWidget {
+  const _ConfigPickerTile({
+    required this.subscription,
+    required this.accent,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final Subscription subscription;
+  final Color accent;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final name =
+        subscription.deviceName.isEmpty ? 'Устройство' : subscription.deviceName;
+    final meta = <String>[
+      if (subscription.tariffName.isNotEmpty) subscription.tariffName,
+      if (subscription.expiresAt != null && subscription.expiresAt!.isNotEmpty)
+        'до ${subscription.expiresAt}',
+    ].join(' · ');
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: selected ? accent.withOpacity(0.14) : AppColors.glass,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        name,
+                        style: TextStyle(
+                          color: AppColors.ink,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      if (meta.isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          meta,
+                          style: TextStyle(
+                            color: AppColors.inkSoft,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                Icon(
+                  selected
+                      ? Icons.check_circle_rounded
+                      : Icons.radio_button_unchecked_rounded,
+                  color: selected ? accent : AppColors.inkMuted,
+                  size: 22,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// Compact "Конфиг: <name> ▾" trigger shown above the connect button (and in the
+// desktop frame) only when the selected product has 2+ active configs.
+class _ConfigSelectorButton extends StatelessWidget {
+  const _ConfigSelectorButton({
+    required this.product,
+    required this.deviceName,
+    required this.count,
+    required this.onTap,
+  });
+
+  final VpnProduct product;
+  final String deviceName;
+  final int count;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = AppColors.accentFor(product);
+    final name = deviceName.isEmpty ? 'выбрать' : deviceName;
+    return Material(
+      color: AppColors.glass,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: AppColors.glassBorder),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.dns_rounded, color: accent, size: 18),
+              const SizedBox(width: 10),
+              Text(
+                'Конфиг:',
+                style: TextStyle(
+                  color: AppColors.inkSoft,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  name,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: AppColors.ink,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              Text(
+                '$count',
+                style: TextStyle(
+                  color: AppColors.inkMuted,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Icon(
+                Icons.expand_more_rounded,
+                color: AppColors.inkMuted,
+                size: 20,
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
