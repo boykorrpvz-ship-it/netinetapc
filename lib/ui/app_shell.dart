@@ -2414,72 +2414,52 @@ class _DesktopControlPane extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 16),
-          // The window is a fixed 980x620 canvas, so the middle scrolls if the
-          // content ever outgrows it (e.g. config selector visible) while the
-          // "Обновить конфиг" button stays pinned and always visible.
-          Expanded(
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    'Тип VPN',
-                    style: TextStyle(
-                      color: AppColors.ink,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _DesktopTypeCard(
-                          product: VpnProduct.vless,
-                          selected: product == VpnProduct.vless,
-                          active: activeProducts[VpnProduct.vless] == true,
-                          pending: pendingProducts[VpnProduct.vless] == true,
-                          subscription: subscriptions[VpnProduct.vless],
-                          onTap: () => onSelected?.call(VpnProduct.vless),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: _DesktopTypeCard(
-                          product: VpnProduct.amneziaWg,
-                          selected: product == VpnProduct.amneziaWg,
-                          active: activeProducts[VpnProduct.amneziaWg] == true,
-                          pending:
-                              pendingProducts[VpnProduct.amneziaWg] == true,
-                          subscription: subscriptions[VpnProduct.amneziaWg],
-                          onTap: () => onSelected?.call(VpnProduct.amneziaWg),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  _DesktopSubscriptionCard(
-                    product: product,
-                    active: active,
-                    subscription: subscription,
-                    profile: profile,
-                    onRefresh: busy ? null : onRefreshSelected,
-                  ),
-                  if ((configOptions[product]?.length ?? 0) >= 2) ...[
-                    const SizedBox(height: 10),
-                    _ConfigSelectorButton(
-                      product: product,
-                      deviceName: subscription?.deviceName ?? '',
-                      count: configOptions[product]!.length,
-                      onTap: busy ? null : onPickConfig,
-                    ),
-                  ],
-                ],
-              ),
+          const SizedBox(height: 24),
+          Text(
+            'Тип VPN',
+            style: TextStyle(
+              color: AppColors.ink,
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
             ),
           ),
           const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: _DesktopTypeCard(
+                  product: VpnProduct.vless,
+                  selected: product == VpnProduct.vless,
+                  active: activeProducts[VpnProduct.vless] == true,
+                  pending: pendingProducts[VpnProduct.vless] == true,
+                  subscription: subscriptions[VpnProduct.vless],
+                  onTap: () => onSelected?.call(VpnProduct.vless),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _DesktopTypeCard(
+                  product: VpnProduct.amneziaWg,
+                  selected: product == VpnProduct.amneziaWg,
+                  active: activeProducts[VpnProduct.amneziaWg] == true,
+                  pending: pendingProducts[VpnProduct.amneziaWg] == true,
+                  subscription: subscriptions[VpnProduct.amneziaWg],
+                  onTap: () => onSelected?.call(VpnProduct.amneziaWg),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          _DesktopSubscriptionCard(
+            product: product,
+            active: active,
+            subscription: subscription,
+            profile: profile,
+            onRefresh: busy ? null : onRefreshSelected,
+            configCount: configOptions[product]?.length ?? 0,
+            onPickConfig: busy ? null : onPickConfig,
+          ),
+          const SizedBox(height: 14),
           Row(
             children: [
               Expanded(
@@ -2603,6 +2583,8 @@ class _DesktopSubscriptionCard extends StatelessWidget {
     required this.subscription,
     required this.profile,
     required this.onRefresh,
+    this.configCount = 0,
+    this.onPickConfig,
   });
 
   final VpnProduct product;
@@ -2610,11 +2592,14 @@ class _DesktopSubscriptionCard extends StatelessWidget {
   final Subscription? subscription;
   final StoredVpnProfile? profile;
   final VoidCallback? onRefresh;
+  final int configCount;
+  final VoidCallback? onPickConfig;
 
   @override
   Widget build(BuildContext context) {
     final accent = AppColors.accentFor(product);
     final expires = _desktopDate(subscription?.expiresAt);
+    final canPick = configCount >= 2 && onPickConfig != null;
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -2677,8 +2662,16 @@ class _DesktopSubscriptionCard extends StatelessWidget {
                 _DesktopInfoRow(
                   icon: Icons.badge_rounded,
                   accent: accent,
-                  label: 'Профиль',
+                  label: canPick ? 'Профиль · выбор из $configCount' : 'Профиль',
                   value: profile?.name ?? 'Не создан',
+                  onTap: canPick ? onPickConfig : null,
+                  trailing: canPick
+                      ? Icon(
+                          Icons.unfold_more_rounded,
+                          size: 18,
+                          color: accent,
+                        )
+                      : null,
                 ),
                 const Padding(
                   padding: EdgeInsets.symmetric(vertical: 9),
@@ -2767,16 +2760,20 @@ class _DesktopInfoRow extends StatelessWidget {
     required this.accent,
     required this.label,
     required this.value,
+    this.trailing,
+    this.onTap,
   });
 
   final IconData icon;
   final Color accent;
   final String label;
   final String value;
+  final Widget? trailing;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Row(
+    final row = Row(
       children: [
         Container(
           width: 34,
@@ -2817,7 +2814,24 @@ class _DesktopInfoRow extends StatelessWidget {
             ],
           ),
         ),
+        if (trailing != null) ...[
+          const SizedBox(width: 8),
+          trailing!,
+        ],
       ],
+    );
+
+    if (onTap == null) {
+      return row;
+    }
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: row,
+      ),
     );
   }
 }
