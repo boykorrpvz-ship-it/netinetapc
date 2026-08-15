@@ -2414,59 +2414,72 @@ class _DesktopControlPane extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 24),
-          Text(
-            'Тип VPN',
-            style: TextStyle(
-              color: AppColors.ink,
-              fontSize: 20,
-              fontWeight: FontWeight.w700,
+          const SizedBox(height: 16),
+          // The window is a fixed 980x620 canvas, so the middle scrolls if the
+          // content ever outgrows it (e.g. config selector visible) while the
+          // "Обновить конфиг" button stays pinned and always visible.
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'Тип VPN',
+                    style: TextStyle(
+                      color: AppColors.ink,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _DesktopTypeCard(
+                          product: VpnProduct.vless,
+                          selected: product == VpnProduct.vless,
+                          active: activeProducts[VpnProduct.vless] == true,
+                          pending: pendingProducts[VpnProduct.vless] == true,
+                          subscription: subscriptions[VpnProduct.vless],
+                          onTap: () => onSelected?.call(VpnProduct.vless),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _DesktopTypeCard(
+                          product: VpnProduct.amneziaWg,
+                          selected: product == VpnProduct.amneziaWg,
+                          active: activeProducts[VpnProduct.amneziaWg] == true,
+                          pending:
+                              pendingProducts[VpnProduct.amneziaWg] == true,
+                          subscription: subscriptions[VpnProduct.amneziaWg],
+                          onTap: () => onSelected?.call(VpnProduct.amneziaWg),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  _DesktopSubscriptionCard(
+                    product: product,
+                    active: active,
+                    subscription: subscription,
+                    profile: profile,
+                    onRefresh: busy ? null : onRefreshSelected,
+                  ),
+                  if ((configOptions[product]?.length ?? 0) >= 2) ...[
+                    const SizedBox(height: 10),
+                    _ConfigSelectorButton(
+                      product: product,
+                      deviceName: subscription?.deviceName ?? '',
+                      count: configOptions[product]!.length,
+                      onTap: busy ? null : onPickConfig,
+                    ),
+                  ],
+                ],
+              ),
             ),
           ),
           const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: _DesktopTypeCard(
-                  product: VpnProduct.vless,
-                  selected: product == VpnProduct.vless,
-                  active: activeProducts[VpnProduct.vless] == true,
-                  pending: pendingProducts[VpnProduct.vless] == true,
-                  subscription: subscriptions[VpnProduct.vless],
-                  onTap: () => onSelected?.call(VpnProduct.vless),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _DesktopTypeCard(
-                  product: VpnProduct.amneziaWg,
-                  selected: product == VpnProduct.amneziaWg,
-                  active: activeProducts[VpnProduct.amneziaWg] == true,
-                  pending: pendingProducts[VpnProduct.amneziaWg] == true,
-                  subscription: subscriptions[VpnProduct.amneziaWg],
-                  onTap: () => onSelected?.call(VpnProduct.amneziaWg),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 18),
-          _DesktopSubscriptionCard(
-            product: product,
-            active: active,
-            subscription: subscription,
-            profile: profile,
-            onRefresh: busy ? null : onRefreshSelected,
-          ),
-          if ((configOptions[product]?.length ?? 0) >= 2) ...[
-            const SizedBox(height: 12),
-            _ConfigSelectorButton(
-              product: product,
-              deviceName: subscription?.deviceName ?? '',
-              count: configOptions[product]!.length,
-              onTap: busy ? null : onPickConfig,
-            ),
-          ],
-          const SizedBox(height: 14),
           Row(
             children: [
               Expanded(
